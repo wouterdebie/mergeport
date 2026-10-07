@@ -842,6 +842,22 @@ struct MainWindow: View {
 struct Overview: View {
     @EnvironmentObject var model: AppModel
     @FocusState private var searchFocused: Bool
+    @State private var pendingOpenAll: [PullRequest] = []
+
+    /// Opens right away for a handful; asks first when it would open many tabs.
+    private func openAll(_ prs: [PullRequest]) {
+        let fresh = model.unopened(prs)
+        if fresh.count > 10 { pendingOpenAll = fresh } else { model.openAll(fresh) }
+    }
+
+    private func openAllButton(_ prs: [PullRequest], compact: Bool) -> some View {
+        let fresh = model.unopened(prs).count
+        return Button { openAll(prs) } label: {
+            Label(compact ? "Open all" : "Open all (\(fresh))", systemImage: "rectangle.stack.badge.plus")
+        }
+        .disabled(fresh == 0)
+        .help(fresh == 0 ? "All of these are already open" : "Open \(fresh) PR\(fresh == 1 ? "" : "s") in tabs")
+    }
 
     private var title: String { model.repositoryFilter ?? model.scope.title }
 
@@ -897,6 +913,7 @@ struct Overview: View {
                     }.frame(width: 220)
                     Button { model.showGroupingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
                         .buttonStyle(.borderless).help("Configure ticket prefixes and branch aliases")
+                    openAllButton(model.filteredPRs, compact: false)
                     if let stage = model.stageFilter {
                         Button {
                             model.stageFilter = nil
@@ -941,6 +958,10 @@ struct Overview: View {
                                     Text("\(group.pullRequests.count)")
                                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                                     Spacer()
+                                    if group.pullRequests.count > 1 {
+                                        openAllButton(group.pullRequests, compact: true)
+                                            .buttonStyle(.borderless).font(.caption)
+                                    }
                                     if let issue = groupIssue(group) {
                                         Button { model.openExternal(issue.url) } label: {
                                             Label("Open in Linear", systemImage: "arrow.up.forward.square")
@@ -965,6 +986,15 @@ struct Overview: View {
             }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 10)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .confirmationDialog(
+            "Open \(pendingOpenAll.count) tabs?",
+            isPresented: Binding(get: { !pendingOpenAll.isEmpty }, set: { if !$0 { pendingOpenAll = [] } })
+        ) {
+            Button("Open \(pendingOpenAll.count) Tabs") { model.openAll(pendingOpenAll); pendingOpenAll = [] }
+            Button("Cancel", role: .cancel) { pendingOpenAll = [] }
+        } message: {
+            Text("Every PR in this view opens in a tab and its review loads in the background.")
+        }
         .onAppear { focusSearchIfRequested() }
         .onChange(of: model.searchFocusRequested) { focusSearchIfRequested() }
     }

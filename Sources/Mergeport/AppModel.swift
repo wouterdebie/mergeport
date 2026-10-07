@@ -380,6 +380,28 @@ final class AppModel: ObservableObject {
         refreshActiveReview()
     }
 
+    /// Opens tabs for PRs that aren't open yet, keeping the current view; returns how many were added.
+    @discardableResult
+    func openAll(_ prs: [PullRequest]) -> Int {
+        var added = 0
+        for pr in prs where GitHubNavigation.belongsTo(pr.url, pr: pr)
+            && !tabs.contains(where: { $0.pr.repository.lowercased() == pr.repository.lowercased() && $0.pr.number == pr.number }) {
+            let tab = ReviewTab(pr: pr, location: pr.url)
+            tabs.insert(tab, at: TabGroups.insertionIndex(for: tab, in: tabs) { tabsRelated($0.pr, $1.pr) })
+            added += 1
+        }
+        guard added > 0 else { return 0 }
+        persistWorkspace()
+        preloadReviews()
+        return added
+    }
+
+    func unopened(_ prs: [PullRequest]) -> [PullRequest] {
+        prs.filter { pr in
+            !tabs.contains { $0.pr.repository.lowercased() == pr.repository.lowercased() && $0.pr.number == pr.number }
+        }
+    }
+
     func openLinkedPR(_ url: URL) {
         guard let identity = GitHubNavigation.pullRequestIdentity(url) else { return }
         if let known = pullRequests.first(where: { GitHubNavigation.belongsTo(url, pr: $0) }) {

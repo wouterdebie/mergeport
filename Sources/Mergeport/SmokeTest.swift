@@ -154,6 +154,18 @@ enum SmokeTest {
         guard model.tabs.map(\.pr.number) == [451], model.selectedTab == staging451.id else {
           throw MergeportError.message("Close Other Tabs left the wrong tabs: \(model.tabs.map(\.pr.number)).")
         }
+        model.setGroupingMode(.ticket)
+        guard case .success(let ticketGroups) = model.groupingResult,
+          let routingGroup = ticketGroups.first(where: { $0.title == "CON-205" })
+        else { throw MergeportError.message("No CON-205 group fixture.") }
+        let selectedBefore = model.selectedTab
+        let added = model.openAll(routingGroup.pullRequests)
+        guard added == routingGroup.pullRequests.count, added == 2,
+          model.unopened(routingGroup.pullRequests).isEmpty, model.selectedTab == selectedBefore,
+          model.openAll(routingGroup.pullRequests) == 0
+        else {
+          throw MergeportError.message("Open all should open each group PR once and keep the current view.")
+        }
         model.tabLayout = layout
         for tab in model.tabs where !before.contains(tab.id) { model.closeTab(tab.id) }
         model.selectTab(nil)
@@ -175,7 +187,7 @@ enum SmokeTest {
         }
         model.setGroupingMode(.ticket)
         print(
-          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks, tab group actions and cross-repository ticket grouping."
+          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks, tab group actions, open all and cross-repository ticket grouping."
         )
       }
       if let expected = args.firstIndex(of: "--expect-bundled-client-id") {

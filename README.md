@@ -70,6 +70,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   Tabs in Sidebar) moves open PRs into an "Open" section above the inbox:
   one row per PR with its status, target branch and what it's waiting on,
   grouped like the tab bar, with collapsible groups and sidebar sections.
+- **Open all**: open every PR in the current overview view (after filters and
+  search), or every PR in one group, as tabs without leaving the overview. PRs
+  that are already open are skipped; more than 10 asks first.
 - **Tab cleanup**: optionally close tabs automatically when their PR merges or
   closes (right away or after a day; the tab you're on and tabs with unsent
   drafts stay). Right-click a tab or group to close the tab, its group, other
