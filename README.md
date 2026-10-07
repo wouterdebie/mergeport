@@ -50,6 +50,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   family as `feature/foo`.
 - **Related PRs**: the review sidebar lists PRs from the same source branch
   and PRs for the same Linear ticket (across repositories); click one to open it.
+- **Grouped tabs**: tabs read `#number TICKET title`. A new tab opens next to
+  its related tabs (same source branch or ticket), and related tabs share a
+  group outline. Click anywhere on a tab to select it.
 - **Grouping**: repository, source branch, reusable branch groups, ticket
   identifier, or an ungrouped list. Configurable suffix rules group ephemeral
   `<branch>`, `<branch>-staging` and `<branch>-test` branches without creating

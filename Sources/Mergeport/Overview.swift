@@ -519,30 +519,21 @@ struct MainWindow: View {
                         .font(.callout.weight(.medium)).padding(.horizontal, 16).padding(.vertical, 11)
                         .background(model.selectedTab == nil ? Color.accentColor.opacity(0.12) : .clear,
                                     in: RoundedRectangle(cornerRadius: 7))
+                        .contentShape(RoundedRectangle(cornerRadius: 7))
                 }.buttonStyle(.plain)
-                ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, tab in
-                    HStack(spacing: 8) {
-                        Button { model.selectTab(tab.id) } label: {
-                            HStack(spacing: 7) {
-                                if let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) { tabHint(hint) }
-                                let status = YardPalette.status(tab.pr)
-                                Image(systemName: status.symbol).foregroundStyle(status.color)
-                                Text("#\(String(tab.pr.number)) \(tab.pr.title)")
-                                    .lineLimit(1).truncationMode(.tail).frame(maxWidth: 220, alignment: .leading)
-                                Text(tab.pr.base).font(.caption.monospaced().weight(.bold))
-                                    .foregroundStyle(Color.branchBlue)
-                                    .padding(.horizontal, 6).padding(.vertical, 2)
-                                    .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
-                            }.font(.callout)
-                        }.buttonStyle(.plain)
-                        Button { model.closeTab(tab.id) } label: {
-                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                        }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+                let tabs = model.tabs
+                ForEach(TabGroups.runs(tabs) { model.isRelated($0.pr, $1.pr) }, id: \.self) { run in
+                    if run.count > 1 {
+                        HStack(spacing: 2) {
+                            ForEach(run, id: \.self) { index in tabItem(tabs[index], index: index) }
+                        }
+                        .padding(.horizontal, 2)
+                        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
+                        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.1)))
+                        .help("Related PRs")
+                    } else {
+                        tabItem(tabs[run.lowerBound], index: run.lowerBound)
                     }
-                    .padding(.horizontal, 12).padding(.vertical, 12)
-                    .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
-                    .help(tab.pr.displayTitle)
-                    .id(tab.id)
                 }
             }.padding(.horizontal, 10).padding(.vertical, 5)
         }
@@ -555,6 +546,36 @@ struct MainWindow: View {
             withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id) }
         }
         }
+    }
+
+    private func tabItem(_ tab: ReviewTab, index: Int) -> some View {
+        let ticket = model.ticket(for: tab.pr)
+        return HStack(spacing: 8) {
+                HStack(spacing: 7) {
+                    if let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) { tabHint(hint) }
+                    let status = YardPalette.status(tab.pr)
+                    Image(systemName: status.symbol).foregroundStyle(status.color)
+                    Text("#\(String(tab.pr.number))").monospacedDigit().foregroundStyle(.secondary)
+                    if let ticket {
+                        Text(ticket).font(.callout.monospaced().weight(.medium)).foregroundStyle(.secondary)
+                    }
+                    Text(TabGroups.title(tab.pr.title, without: ticket))
+                        .lineLimit(1).truncationMode(.tail).frame(maxWidth: 220, alignment: .leading)
+                    Text(tab.pr.base).font(.caption.monospaced().weight(.bold))
+                        .foregroundStyle(Color.branchBlue)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
+                }.font(.callout)
+            Button { model.closeTab(tab.id) } label: {
+                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+            }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 12)
+        .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(RoundedRectangle(cornerRadius: 7))
+        .onTapGesture { model.selectTab(tab.id) }
+        .help(tab.pr.displayTitle)
+        .id(tab.id)
     }
 
     /// Merged and closed tabs keep a status tint so they stand out; the selected tab is stronger.

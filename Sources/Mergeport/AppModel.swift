@@ -112,7 +112,9 @@ final class AppModel: ObservableObject {
             if isConnected, let saved = defaults.data(forKey: "workspace") {
                 let workspace = try JSONDecoder().decode(SavedWorkspace.self, from: saved)
                 snapshot = workspace.snapshot
-                tabs = workspace.tabs.filter { GitHubNavigation.belongsTo($0.location, pr: $0.pr) }
+                tabs = TabGroups.clustered(
+                    workspace.tabs.filter { GitHubNavigation.belongsTo($0.location, pr: $0.pr) },
+                    related: { self.isRelated($0.pr, $1.pr) })
                 selectedTab = tabs.contains { $0.id == workspace.selectedTab } ? workspace.selectedTab : nil
                 reviewDrafts = workspace.drafts ?? [:]
             }
@@ -342,7 +344,8 @@ final class AppModel: ObservableObject {
             }
         } else {
             let safeLocation = location.flatMap { GitHubNavigation.belongsTo($0, pr: pr) ? $0 : nil } ?? pr.url
-            tabs.append(ReviewTab(pr: pr, location: safeLocation))
+            let tab = ReviewTab(pr: pr, location: safeLocation)
+            tabs.insert(tab, at: TabGroups.insertionIndex(for: tab, in: tabs) { isRelated($0.pr, $1.pr) })
             selectedTab = pr.id
         }
         persistWorkspace()
@@ -515,6 +518,16 @@ final class AppModel: ObservableObject {
             }.sorted(by: PullRequest.overviewOrder)
         } ?? []
         return branch + sameTicket
+    }
+
+    /// Same source branch (staging/main pair) or same Linear ticket, as in Related PRs.
+    func isRelated(_ a: PullRequest, _ b: PullRequest) -> Bool {
+        guard a.id != b.id else { return false }
+        let left = BranchIdentity(a), right = BranchIdentity(b)
+        if left.repository == right.repository && left.sourceRepository == right.sourceRepository
+            && canonicalBranch(a) == canonicalBranch(b) { return true }
+        guard let ticket = ticket(for: a) else { return false }
+        return ticket == self.ticket(for: b)
     }
 
     func canonicalBranch(_ pr: PullRequest) -> String {

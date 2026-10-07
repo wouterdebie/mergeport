@@ -129,6 +129,19 @@ enum SmokeTest {
         else {
           throw MergeportError.message("Related PRs should come from the source branch and the Linear ticket.")
         }
+        let before = model.tabs.map(\.id)
+        model.open(staging451)
+        model.open(routing)
+        guard let main452 = model.pullRequests.first(where: { $0.number == 452 }) else {
+          throw MergeportError.message("No #452 fixture.")
+        }
+        model.open(main452)
+        let opened = model.tabs.map(\.pr.number).filter { [451, 440, 452].contains($0) }
+        guard opened == [451, 452, 440] else {
+          throw MergeportError.message("Related tabs were not kept together: \(opened).")
+        }
+        for tab in model.tabs where !before.contains(tab.id) { model.closeTab(tab.id) }
+        model.selectTab(nil)
         print(
           "PASS: reusable branch rules, explicit aliases, sibling links, related PRs and cross-repository ticket grouping."
         )
