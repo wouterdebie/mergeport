@@ -36,12 +36,30 @@ final class ConversationWebView: WKWebView {
   }
 }
 
+/// Last measured height per rendered body, so a rebuilt view starts at its real size
+/// instead of 80pt and doesn't make the conversation jump while it re-renders.
+@MainActor
+enum RenderedBodyHeights {
+  private static var heights: [String: CGFloat] = [:]
+  static func height(for html: String) -> CGFloat? { heights[html] }
+  static func store(_ height: CGFloat, for html: String) {
+    if heights.count > 2000 { heights.removeAll(keepingCapacity: true) }
+    heights[html] = height
+  }
+}
+
 struct RenderedBody: View {
   let text: String
   let html: String?
   @Environment(\.openURL) private var openURL
-  @State private var height: CGFloat = 80
+  @State private var height: CGFloat
   @State private var renderingError: String?
+
+  init(text: String, html: String?) {
+    self.text = text
+    self.html = html
+    _height = State(initialValue: html.flatMap(RenderedBodyHeights.height(for:)) ?? 80)
+  }
 
   var bodyView: some View {
     Group {
@@ -69,11 +87,14 @@ private struct HTMLBody: NSViewRepresentable {
   @Binding var error: String?
   let openLink: (URL) -> Void
 
+  /// One ephemeral store for every body instead of a fresh one per comment.
+  @MainActor private static let dataStore = WKWebsiteDataStore.nonPersistent()
+
   func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
   func makeNSView(context: Context) -> WKWebView {
     let configuration = WKWebViewConfiguration()
-    configuration.websiteDataStore = .nonPersistent()
+    configuration.websiteDataStore = Self.dataStore
     configuration.userContentController.add(context.coordinator, name: "bodyHeight")
     let view = ConversationWebView(frame: .zero, configuration: configuration)
     view.navigationDelegate = context.coordinator
@@ -169,6 +190,7 @@ private struct HTMLBody: NSViewRepresentable {
         number.doubleValue.isFinite, number.doubleValue >= 0
       else { return }
       let height = max(1, CGFloat(number.doubleValue))
+      if let html { RenderedBodyHeights.store(height, for: html) }
       if abs(parent.height - height) > 0.5 { parent.height = height }
     }
 

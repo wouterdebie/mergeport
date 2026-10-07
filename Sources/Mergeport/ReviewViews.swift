@@ -343,7 +343,9 @@ struct NativeReviewView: View {
     ScrollViewReader { proxy in
     ScrollView {
       HStack(alignment: .top, spacing: 32) {
-      LazyVStack(alignment: .leading, spacing: 18) {
+      // Eager on purpose: a lazy stack tears down each comment's web view when it scrolls
+      // off screen and rebuilds it on the way back, which made scrolling stutter.
+      VStack(alignment: .leading, spacing: 18) {
         timelineRow(author: review.pr.author, symbol: "text.bubble") {
           conversationCard(
             author: review.pr.author, action: "opened this pull request", date: details.createdAt
@@ -1241,9 +1243,7 @@ struct AvatarView: View {
     let shape = RoundedRectangle(cornerRadius: bot ? size * 0.2 : size / 2)
     Group {
       if let url {
-        AsyncImage(url: url) { image in
-          image.resizable().scaledToFill()
-        } placeholder: {
+        CachedImage(url: ImageCache.sized(url, points: size)) {
           Color.primary.opacity(0.08)
         }
       } else {

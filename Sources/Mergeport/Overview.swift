@@ -742,7 +742,7 @@ private struct PRRow: View {
                         Text(pr.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
                         HStack(spacing: 7) {
                             if let url = pr.authorAvatarURL {
-                                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: {
+                                CachedImage(url: ImageCache.sized(url, points: 16)) {
                                     Color.primary.opacity(0.08)
                                 }.frame(width: 16, height: 16).clipShape(Circle())
                             }
