@@ -233,6 +233,16 @@ struct SettingsView: View {
                 }
                 UpdateSettingsSection()
                 Section("Review tabs") {
+                    Picker("Show tabs in", selection: $model.tabLayout) {
+                        ForEach(TabLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.pickerStyle(.segmented)
+                    Text("Sidebar lists open PRs above the inbox with their status, grouped like the tab bar; groups collapse. The top bar keeps Chrome-style tabs.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Picker("Close merged and closed tabs", selection: $model.tabAutoClose) {
+                        ForEach(TabAutoClose.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    Text("Only tabs that merged or closed while open. The tab you're on and tabs with unsent drafts stay open. Right-click a tab to close its group, other tabs, or all merged and closed tabs.")
+                        .font(.caption).foregroundStyle(.secondary)
                     Text("Reviews are native and use your OAuth account. Open tabs, selected sections and unsent review/discussion/reply drafts are restored when the app starts. No embedded-browser login is needed.")
                         .font(.callout).foregroundStyle(.secondary)
                     Link("Manage authorized OAuth apps", destination: URL(string: "https://github.com/settings/applications")!)

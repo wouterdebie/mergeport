@@ -35,6 +35,10 @@ private struct PullRequestCommands: Commands {
             Button("Back") { model.goBack() }.keyboardShortcut("[").disabled(!model.canGoBack)
             Button("Forward") { model.goForward() }.keyboardShortcut("]").disabled(!model.canGoForward)
             Divider()
+            Button(model.tabLayout == .sidebar ? "Show Tabs in Top Bar" : "Show Tabs in Sidebar") {
+                model.tabLayout = model.tabLayout == .sidebar ? .topBar : .sidebar
+            }
+            Divider()
         }
         CommandMenu("Go") {
             Button("Quick Open…") { model.showPalette.toggle() }.keyboardShortcut("k")
@@ -64,6 +68,12 @@ private struct PullRequestCommands: Commands {
             Button("Close Review Tab") {
                 if let id = model.selectedTab { model.closeTab(id) }
             }.keyboardShortcut("w")
+            Button("Close Other Tabs") {
+                if let id = model.selectedTab { model.closeOtherTabs(id) }
+            }.disabled(model.selectedTab == nil || model.tabs.count < 2)
+            Button("Close Merged and Closed Tabs") { model.closeFinishedTabs(all: true) }
+                .disabled(model.finishedTabs.isEmpty)
+            Divider()
             Button("Manage Repositories…") { model.showRepositories = true }
         }
     }

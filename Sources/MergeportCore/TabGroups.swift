@@ -87,3 +87,38 @@ public enum TabSizing {
     return min(maximum, max(minimum, (available / Double(tabs)).rounded(.down)))
   }
 }
+
+/// Where review tabs are shown.
+public enum TabLayout: String, CaseIterable, Codable, Sendable {
+  case topBar, sidebar
+
+  public var title: String {
+    switch self {
+    case .topBar: "Top bar"
+    case .sidebar: "Sidebar"
+    }
+  }
+}
+
+/// When tabs of merged or closed PRs close by themselves.
+public enum TabAutoClose: String, CaseIterable, Codable, Sendable {
+  case off, immediately, afterDay
+
+  public var title: String {
+    switch self {
+    case .off: "Never"
+    case .immediately: "Right away"
+    case .afterDay: "After a day"
+    }
+  }
+
+  /// `finishedAt` is when Mergeport saw the PR merge or close while its tab was open.
+  public func shouldClose(finishedAt: Date?, now: Date = .now) -> Bool {
+    guard let finishedAt else { return false }
+    switch self {
+    case .off: return false
+    case .immediately: return true
+    case .afterDay: return now.timeIntervalSince(finishedAt) >= 24 * 60 * 60
+    }
+  }
+}

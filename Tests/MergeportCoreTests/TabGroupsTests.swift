@@ -48,3 +48,14 @@ struct TabSizingTests {
     #expect(TabSizing.width(tabs: 0, available: 1000) == TabSizing.maximum)
   }
 }
+
+struct TabAutoCloseTests {
+  @Test func onlyClosesTabsThatFinishedWhileOpen() {
+    let now = Date(timeIntervalSince1970: 1_000_000)
+    #expect(!TabAutoClose.immediately.shouldClose(finishedAt: nil, now: now))
+    #expect(TabAutoClose.immediately.shouldClose(finishedAt: now, now: now))
+    #expect(!TabAutoClose.off.shouldClose(finishedAt: now.addingTimeInterval(-100_000), now: now))
+    #expect(!TabAutoClose.afterDay.shouldClose(finishedAt: now.addingTimeInterval(-3_600), now: now))
+    #expect(TabAutoClose.afterDay.shouldClose(finishedAt: now.addingTimeInterval(-86_400), now: now))
+  }
+}

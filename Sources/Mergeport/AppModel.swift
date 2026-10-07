@@ -7,6 +7,8 @@ import WebKit
 struct ReviewTab: Identifiable, Codable {
     var pr: PullRequest
     var location: URL
+    /// When a refresh first saw this PR merged or closed; nil if it was already finished when opened.
+    var finishedAt: Date? = nil
     var id: String { pr.id }
 }
 
@@ -48,6 +50,15 @@ final class AppModel: ObservableObject {
             defaults.set(tabGrouping.rawValue, forKey: "tabGrouping")
             tabs = TabGroups.clustered(tabs) { tabsRelated($0.pr, $1.pr) }
             persistWorkspace()
+        }
+    }
+    @Published var tabLayout: TabLayout {
+        didSet { if !isDemo { defaults.set(tabLayout.rawValue, forKey: "tabLayout") } }
+    }
+    @Published var tabAutoClose: TabAutoClose {
+        didSet {
+            if !isDemo { defaults.set(tabAutoClose.rawValue, forKey: "tabAutoClose") }
+            closeFinishedTabs()
         }
     }
     @Published var isConnected = false
@@ -101,6 +112,8 @@ final class AppModel: ObservableObject {
         let interval = defaults.integer(forKey: "refreshInterval")
         refreshInterval = [60, 120, 300, 600].contains(interval) ? interval : 120
         tabGrouping = defaults.string(forKey: "tabGrouping").flatMap(TabGrouping.init(rawValue:)) ?? .related
+        tabLayout = defaults.string(forKey: "tabLayout").flatMap(TabLayout.init(rawValue:)) ?? .topBar
+        tabAutoClose = defaults.string(forKey: "tabAutoClose").flatMap(TabAutoClose.init(rawValue:)) ?? .off
         linearClientID = (Bundle.main.object(forInfoDictionaryKey: LinearOAuth.bundleInfoKey) as? String)
             .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         defer { trackNavigation() }
@@ -200,10 +213,16 @@ final class AppModel: ObservableObject {
             for index in tabs.indices {
                 if var fresh = tabUpdates[tabs[index].id] {
                     fresh.id = tabs[index].id
+                    if fresh.state == "OPEN" {
+                        tabs[index].finishedAt = nil
+                    } else if tabs[index].pr.state == "OPEN" {
+                        tabs[index].finishedAt = .now
+                    }
                     tabs[index].pr = fresh
                 }
             }
             error = nil
+            closeFinishedTabs()
             persistWorkspace()
             refreshActiveReview()
             preloadReviews()
@@ -379,8 +398,62 @@ final class AppModel: ObservableObject {
 
     func selectTab(_ id: String?) {
         selectedTab = id
+        closeFinishedTabs()
         persistWorkspace()
         refreshActiveReview()
+    }
+
+    /// Tabs that can close without asking: no unsent draft and no GitHub action in flight.
+    private func canCloseQuietly(_ id: String) -> Bool {
+        reviewModels[id]?.isPerforming != true
+            && reviewModels[id]?.draft.hasContent != true && reviewDrafts[id]?.hasContent != true
+    }
+
+    /// Closes several tabs at once; tabs with unsent drafts or running actions stay open.
+    func closeTabs(_ ids: [String]) {
+        let closing = Set(ids.filter(canCloseQuietly))
+        let kept = ids.filter { !closing.contains($0) }.compactMap { id in tabs.first { $0.id == id } }
+        if !closing.isEmpty {
+            let selectedIndex = tabs.firstIndex { $0.id == selectedTab }
+            for id in closing {
+                reviewModels[id]?.draft = ReviewDraft()
+                reviewDrafts.removeValue(forKey: id)
+            }
+            tabs.removeAll { closing.contains($0.id) }
+            if let selected = selectedTab, closing.contains(selected), let selectedIndex {
+                let remaining = tabs.count
+                selectedTab = remaining == 0 ? nil : tabs[min(selectedIndex, remaining - 1)].id
+                refreshActiveReview()
+            }
+            persistWorkspace()
+        }
+        if !kept.isEmpty {
+            report(MergeportError.message(
+                "Kept \(PRStack.list(kept.map(\.pr.number))) open: unsent drafts or a GitHub action in progress."))
+        }
+    }
+
+    func closeOtherTabs(_ id: String) { closeTabs(tabs.map(\.id).filter { $0 != id }) }
+
+    /// The tab's group as shown in the tab bar or sidebar.
+    func tabGroup(of id: String) -> [ReviewTab] {
+        let runs = TabGroups.runs(tabs) { tabsRelated($0.pr, $1.pr) }
+        guard let run = runs.first(where: { $0.contains { tabs[$0].id == id } }) else { return [] }
+        return run.map { tabs[$0] }
+    }
+
+    func closeGroup(of id: String) { closeTabs(tabGroup(of: id).map(\.id)) }
+
+    var finishedTabs: [ReviewTab] { tabs.filter { $0.pr.state != "OPEN" } }
+
+    func closeFinishedTabs(all: Bool = false) {
+        if all { closeTabs(finishedTabs.map(\.id)); return }
+        let due = tabs.filter {
+            $0.id != selectedTab && canCloseQuietly($0.id)
+                && tabAutoClose.shouldClose(finishedAt: $0.finishedAt)
+        }
+        guard !due.isEmpty else { return }
+        closeTabs(due.map(\.id))
     }
 
     /// Cycles through Overview and the review tabs, wrapping around like Safari.

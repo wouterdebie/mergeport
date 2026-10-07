@@ -316,6 +316,9 @@ struct MainWindow: View {
     @State private var tabStrip = TabStripMetrics()
     @State private var tabBarWidth: CGFloat = 0
     @State private var overviewTabWidth: CGFloat = 130
+    @State private var hoveredTab: String?
+    @State private var collapsedGroups: Set<String> = []
+    @AppStorage("collapsedSidebarSections") private var collapsedSections = ""
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
 
@@ -324,8 +327,10 @@ struct MainWindow: View {
             sidebar
         } detail: {
             VStack(spacing: 0) {
-                tabBar
-                Divider()
+                if model.tabLayout == .topBar {
+                    tabBar
+                    Divider()
+                }
                 if let tab = model.activeTab {
                     NativeReviewView(tab: tab, review: model.reviewModel(for: tab)).id(tab.id)
                 } else if model.isConnected || model.isDemo {
@@ -422,11 +427,12 @@ struct MainWindow: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if model.tabLayout == .sidebar { openTabsSection }
                     sidebarSection("INBOX") {
                         ForEach(InboxScope.allCases, id: \.self) { scope in
                             sidebarRow(scope.title, symbol: scope == .all ? "tray.full" : scope == .mine ? "person" : "text.bubble",
                                        count: model.pullRequests.filter { scope.includes($0, login: model.login) }.count,
-                                       selected: model.scope == scope && model.repositoryFilter == nil && model.stageFilter == nil,
+                                       selected: onOverview && model.scope == scope && model.repositoryFilter == nil && model.stageFilter == nil,
                                        shortcut: SidebarDestination.forScope(scope).keyLabel) {
                                 model.showOverview(scope: scope)
                             }
@@ -436,7 +442,7 @@ struct MainWindow: View {
                         ForEach(WorkflowStage.allCases, id: \.self) { stage in
                             sidebarRow(stage.title, symbol: stage.symbol,
                                        count: model.pullRequests.filter { $0.stage == stage }.count,
-                                       selected: model.stageFilter == stage,
+                                       selected: onOverview && model.stageFilter == stage,
                                        color: YardPalette.color(stage),
                                        shortcut: SidebarDestination.forStage(stage).keyLabel) {
                                 model.showOverview(scope: .all, stage: stage)
@@ -446,7 +452,7 @@ struct MainWindow: View {
                     sidebarSection("REPOSITORIES") {
                         ForEach(model.knownRepositories, id: \.self) { repo in
                             sidebarRow(repo, symbol: "shippingbox", count: model.pullRequests.filter { $0.repository == repo }.count,
-                                       selected: model.repositoryFilter == repo) {
+                                       selected: onOverview && model.repositoryFilter == repo) {
                                 model.showOverview(scope: .all, repository: repo)
                             }
                         }
@@ -482,15 +488,182 @@ struct MainWindow: View {
                 Spacer()
             }.padding(16)
         }
-        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 340)
+        .navigationSplitViewColumnWidth(min: 220, ideal: model.tabLayout == .sidebar ? 300 : 250, max: 440)
     }
 
-    private func sidebarSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                .padding(.leading, 10).padding(.bottom, 3)
-            content()
+    /// With tabs in the sidebar, the overview rows only highlight while the overview is showing.
+    private var onOverview: Bool { model.tabLayout == .topBar || model.selectedTab == nil }
+
+    private func isCollapsed(_ title: String) -> Bool {
+        collapsedSections.split(separator: ",").contains(Substring(title))
+    }
+
+    private func toggleSection(_ title: String) {
+        var sections = Set(collapsedSections.split(separator: ",").map(String.init))
+        if !sections.insert(title).inserted { sections.remove(title) }
+        collapsedSections = sections.sorted().joined(separator: ",")
+    }
+
+    private func sidebarSection<Content: View>(
+        _ title: String, count: Int? = nil, accessory: AnyView? = nil, @ViewBuilder content: () -> Content
+    ) -> some View {
+        let collapsed = isCollapsed(title)
+        return VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 4) {
+                Button { withAnimation(.easeInOut(duration: 0.15)) { toggleSection(title) } } label: {
+                    HStack(spacing: 4) {
+                        Text(title)
+                        if let count { Text(String(count)).monospacedDigit() }
+                        Image(systemName: collapsed ? "chevron.right" : "chevron.down").font(.system(size: 8, weight: .bold))
+                        Spacer(minLength: 0)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).help(collapsed ? "Show \(title.lowercased())" : "Hide \(title.lowercased())")
+                if let accessory { accessory }
+            }
+            .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+            .padding(.leading, 10).padding(.trailing, 6).padding(.bottom, 3)
+            if !collapsed { content() }
         }
+    }
+
+    // MARK: Tabs in the sidebar
+
+    private var openTabsSection: some View {
+        let tabs = model.tabs
+        let runs = TabGroups.runs(tabs) { model.tabsRelated($0.pr, $1.pr) }
+        let menu = Menu {
+            tabListMenu
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Close tabs")
+        return sidebarSection("OPEN", count: tabs.count, accessory: tabs.isEmpty ? nil : AnyView(menu)) {
+            if tabs.isEmpty {
+                Text("PRs you open show up here, grouped like the overview.")
+                    .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10)
+            }
+            ForEach(Array(runs.enumerated()), id: \.element) { _, run in
+                if let label = model.tabGroupLabel(run.map { tabs[$0].pr }) {
+                    let collapsed = collapsedGroups.contains(label)
+                    VStack(alignment: .leading, spacing: 1) {
+                        sidebarGroupHeader(label, tabs: run.map { tabs[$0] }, collapsed: collapsed)
+                        if !collapsed {
+                            ForEach(run, id: \.self) { sidebarTab(tabs[$0], index: $0, groupLabel: label) }
+                        }
+                    }
+                    .padding(3)
+                    .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
+                } else {
+                    ForEach(run, id: \.self) { sidebarTab(tabs[$0], index: $0, groupLabel: nil) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var tabListMenu: some View {
+        let finished = model.finishedTabs.count
+        Button("Close Merged and Closed Tabs (\(finished))") { model.closeFinishedTabs(all: true) }
+            .disabled(finished == 0)
+        Button("Close All Tabs") { model.closeTabs(model.tabs.map(\.id)) }
+        Divider()
+        Picker("Show Tabs In", selection: $model.tabLayout) {
+            ForEach(TabLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+    }
+
+    private func sidebarGroupHeader(_ label: String, tabs: [ReviewTab], collapsed: Bool) -> some View {
+        let selectedInside = tabs.contains { $0.id == model.selectedTab }
+        return Button {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                if collapsed { collapsedGroups.remove(label) } else { collapsedGroups.insert(label) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold)).frame(width: 18)
+                Text(label).font(Self.groupLabelFont).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                if collapsed {
+                    HStack(spacing: 2) {
+                        ForEach(tabs) { tab in
+                            let status = YardPalette.status(tab.pr)
+                            Image(systemName: status.symbol).font(.system(size: 9)).foregroundStyle(status.color)
+                        }
+                    }
+                }
+                Text(String(tabs.count)).font(.caption.monospacedDigit())
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7).padding(.vertical, 5)
+            .background(collapsed && selectedInside ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Grouped by \(model.tabGrouping.title.lowercased()): \(label)")
+        .contextMenu {
+            Button(collapsed ? "Expand Group" : "Collapse Group") {
+                if collapsed { collapsedGroups.remove(label) } else { collapsedGroups.insert(label) }
+            }
+            Button("Close Group") { model.closeTabs(tabs.map(\.id)) }
+        }
+    }
+
+    private func sidebarTab(_ tab: ReviewTab, index: Int, groupLabel: String?) -> some View {
+        let pr = tab.pr
+        let ticket = model.ticket(for: pr)
+        let selected = model.selectedTab == tab.id
+        let status = YardPalette.status(pr)
+        let detail = pr.state != "OPEN" ? pr.state.capitalized : pr.stage == .ready ? "Ready to merge" : pr.waitingReason
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: status.symbol).foregroundStyle(status.color).frame(width: 18).padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(TabGroups.title(pr.title, without: ticket)).lineLimit(1).truncationMode(.tail)
+                    .fontWeight(selected ? .semibold : .regular)
+                HStack(spacing: 5) {
+                    Text("#" + String(pr.number)).monospacedDigit()
+                    if let ticket, ticket != groupLabel { Text(ticket).monospaced() }
+                    Text("→ " + pr.base).monospaced().foregroundStyle(Color.branchBlue).lineLimit(1).layoutPriority(-1)
+                    Text("·")
+                    Text(detail).lineLimit(1).truncationMode(.tail).layoutPriority(-2)
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Group {
+                if hoveredTab == tab.id || selected {
+                    Button { model.closeTab(tab.id) } label: {
+                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).frame(width: 16, height: 16)
+                    }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+                } else if model.showShortcutHints, let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) {
+                    ShortcutHint(label: hint)
+                }
+            }.padding(.top, 1)
+        }
+        .font(.callout)
+        .padding(.horizontal, 7).padding(.vertical, 6)
+        .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
+        .contentShape(RoundedRectangle(cornerRadius: 7))
+        .onTapGesture { model.selectTab(tab.id) }
+        .onHover { inside in
+            if inside { hoveredTab = tab.id } else if hoveredTab == tab.id { hoveredTab = nil }
+        }
+        .contextMenu { tabMenu(tab) }
+        .help(pr.displayTitle)
+    }
+
+    @ViewBuilder private func tabMenu(_ tab: ReviewTab) -> some View {
+        Button("Close Tab") { model.closeTab(tab.id) }
+        Button("Close Other Tabs") { model.closeOtherTabs(tab.id) }.disabled(model.tabs.count < 2)
+        let group = model.tabGroup(of: tab.id)
+        if group.count > 1 {
+            Button("Close Group (\(group.count))") { model.closeGroup(of: tab.id) }
+        }
+        let finished = model.finishedTabs.count
+        Button("Close Merged and Closed Tabs (\(finished))") { model.closeFinishedTabs(all: true) }
+            .disabled(finished == 0)
+        Divider()
+        Button("Open on GitHub") { NSWorkspace.shared.open(tab.pr.url) }
     }
 
     private func sidebarRow(_ title: String, symbol: String, count: Int, selected: Bool,
@@ -550,6 +723,9 @@ struct MainWindow: View {
                                 .frame(maxWidth: Self.groupLabelMaxWidth)
                                 .padding(.horizontal, 8)
                                 .help("Grouped by \(model.tabGrouping.title.lowercased()): \(label)")
+                                .contextMenu {
+                                    Button("Close Group (\(run.count))") { model.closeTabs(run.map { tabs[$0].id }) }
+                                }
                             ForEach(run, id: \.self) { index in
                                 tabItem(tabs[index], index: index, width: width, groupLabel: label)
                             }
@@ -636,6 +812,7 @@ struct MainWindow: View {
         .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
         .contentShape(RoundedRectangle(cornerRadius: 7))
         .onTapGesture { model.selectTab(tab.id) }
+        .contextMenu { tabMenu(tab) }
         .help(tab.pr.displayTitle)
         .id(tab.id)
     }

@@ -140,6 +140,21 @@ enum SmokeTest {
         guard opened == [451, 452, 440] else {
           throw MergeportError.message("Related tabs were not kept together: \(opened).")
         }
+        let layout = model.tabLayout
+        model.tabLayout = .sidebar
+        try await Task.sleep(for: .milliseconds(300))
+        model.closeGroup(of: staging451.id)
+        guard !model.tabs.contains(where: { [451, 452].contains($0.pr.number) }),
+          model.tabs.contains(where: { $0.pr.number == 440 })
+        else {
+          throw MergeportError.message("Close Group did not close exactly the related tabs.")
+        }
+        model.open(staging451)
+        model.closeOtherTabs(staging451.id)
+        guard model.tabs.map(\.pr.number) == [451], model.selectedTab == staging451.id else {
+          throw MergeportError.message("Close Other Tabs left the wrong tabs: \(model.tabs.map(\.pr.number)).")
+        }
+        model.tabLayout = layout
         for tab in model.tabs where !before.contains(tab.id) { model.closeTab(tab.id) }
         model.selectTab(nil)
         guard let top = model.pullRequests.first(where: { $0.number == 457 }),
@@ -160,7 +175,7 @@ enum SmokeTest {
         }
         model.setGroupingMode(.ticket)
         print(
-          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks and cross-repository ticket grouping."
+          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks, tab group actions and cross-repository ticket grouping."
         )
       }
       if let expected = args.firstIndex(of: "--expect-bundled-client-id") {

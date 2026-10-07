@@ -66,6 +66,14 @@ indicator. Cached reviews are kept in memory for the current app session.
   each group shows its ticket, branch or repository once. Choose what tabs are
   grouped by in Settings › Grouping › Review tabs (default: ticket or source
   branch). Click anywhere on a tab to select it.
+- **Tabs in the sidebar**: Settings › General › Review tabs (or View › Show
+  Tabs in Sidebar) moves open PRs into an "Open" section above the inbox:
+  one row per PR with its status, target branch and what it's waiting on,
+  grouped like the tab bar, with collapsible groups and sidebar sections.
+- **Tab cleanup**: optionally close tabs automatically when their PR merges or
+  closes (right away or after a day; the tab you're on and tabs with unsent
+  drafts stay). Right-click a tab or group to close the tab, its group, other
+  tabs, or all merged and closed tabs.
 - **Grouping**: repository, source branch, reusable branch groups, ticket
   identifier, GitHub stack, or an ungrouped list. Configurable suffix rules group ephemeral
   `<branch>`, `<branch>-staging` and `<branch>-test` branches without creating
