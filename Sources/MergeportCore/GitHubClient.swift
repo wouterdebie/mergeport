@@ -253,6 +253,9 @@ public struct GitHubClient: Sendable {
           pullRequest {
             id number title url state isDraft headRefName baseRefName reviewDecision mergeStateStatus
             author { login }
+            commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+            reviewRequests(first: 1) { totalCount }
+            latestReviews(first: 1) { totalCount }
           }
         }
       }
@@ -388,7 +391,11 @@ private struct PRNode: Decodable {
           let reviewDecision: String?
           let mergeStateStatus: String
           let author: Actor?
+          let commits: Commits?
+          let reviewRequests: Count?
+          let latestReviews: Count?
         }
+        struct Count: Decodable { let totalCount: Int }
         let position: Int
         let pullRequest: Member?
       }
@@ -408,7 +415,9 @@ private struct PRNode: Decodable {
         id: pr.id, position: entry.position, number: pr.number, title: pr.title, url: pr.url,
         state: pr.state, isDraft: pr.isDraft, head: pr.headRefName, base: pr.baseRefName,
         author: pr.author?.login ?? "ghost", reviewDecision: pr.reviewDecision,
-        mergeState: pr.mergeStateStatus)
+        mergeState: pr.mergeStateStatus,
+        checks: CheckState(graphQL: pr.commits?.nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state),
+        reviewRequests: pr.reviewRequests?.totalCount ?? 0, reviews: pr.latestReviews?.totalCount ?? 0)
     }
     return PRStack(
       number: stack.number, base: stack.baseRefName, size: stack.size, position: position,
@@ -459,7 +468,7 @@ extension GitHubClient {
             commitCount: commits(last: 1) { totalCount }
             sidebarRequests: reviewRequests(first: 50) {
               nodes { requestedReviewer {
-                ... on User { login avatarUrl } ... on Bot { login avatarUrl } ... on Team { name }
+                ... on User { login avatarUrl } ... on Bot { login avatarUrl } ... on Team { name combinedSlug }
               } }
             }
             assignees(first: 20) { nodes { login avatarUrl } }
@@ -660,12 +669,17 @@ extension GitHubClient {
   public static let copilotReviewerLogin = "copilot-pull-request-reviewer"
 
   /// Requests (or re-requests) reviews without removing existing reviewers.
-  public func requestReviews(_ prID: String, logins: [String]) async throws {
+  public func requestReviews(_ prID: String, logins: [String], teams: [String] = []) async throws {
     guard !prID.isEmpty else { throw MergeportError.message("Invalid PR ID.") }
     let valid = logins.filter {
       $0.range(of: "^[A-Za-z0-9-]+(\\[bot\\])?$", options: .regularExpression) != nil
     }
-    guard !valid.isEmpty, valid.count == logins.count else {
+    let validTeams = teams.filter {
+      $0.range(of: "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", options: .regularExpression) != nil
+    }
+    guard !valid.isEmpty || !validTeams.isEmpty, valid.count == logins.count,
+      validTeams.count == teams.count
+    else {
       throw MergeportError.message("Invalid reviewer login.")
     }
     let bots = valid.filter(ReviewDetails.isBot).map {
@@ -676,13 +690,16 @@ extension GitHubClient {
     struct Result: Decodable { let result: Mutation? }
     let _: Result = try await query(
       """
-      mutation($id: ID!, $users: [String!], $bots: [String!]) {
+      mutation($id: ID!, $users: [String!], $bots: [String!], $teams: [String!]) {
         result: requestReviewsByLogin(
-          input: {pullRequestId: $id, userLogins: $users, botLogins: $bots, union: true}
+          input: {pullRequestId: $id, userLogins: $users, botLogins: $bots, teamSlugs: $teams, union: true}
         ) { clientMutationId }
       }
       """,
-      variables: ["id": .string(prID), "users": .strings(users), "bots": .strings(bots)])
+      variables: [
+        "id": .string(prID), "users": .strings(users), "bots": .strings(bots),
+        "teams": .strings(validTeams),
+      ])
   }
 
   /// Suggested reviewers first, then everyone who can be assigned in the repository.
@@ -1143,6 +1160,7 @@ private struct NativeMetadata: Decodable {
       let login: String?
       let avatarUrl: URL?
       let name: String?
+      let combinedSlug: String?
     }
     struct Nodes<T: Decodable>: Decodable { let nodes: [T?] }
     struct Request: Decodable { let requestedReviewer: Person? }
@@ -1175,6 +1193,7 @@ private struct NativeMetadata: Decodable {
       return PullRequestSidebar(
         requestedReviewers: reviewers.compactMap(\.login),
         requestedTeams: reviewers.filter { $0.login == nil }.compactMap(\.name),
+        requestedTeamSlugs: reviewers.filter { $0.login == nil }.compactMap(\.combinedSlug),
         assignees: assignees?.nodes.compactMap { $0?.login } ?? [],
         labels: labels?.nodes.compactMap { $0.map { PullRequestLabel(name: $0.name, color: $0.color) } }
           ?? [],

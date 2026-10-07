@@ -230,6 +230,37 @@ final class ReviewModel: ObservableObject {
         }
     }
 
+    /// People on this PR whose review counts toward the trunk's required approvals.
+    var stackReviewers: [String] {
+        (details?.sidebarReviewers ?? []).filter {
+            !$0.isTeam && !ReviewDetails.isBot($0.login) && !CopilotState.isCopilot($0.login)
+        }.map(\.login)
+    }
+
+    /// Teams requested on this PR, as `org/team-slug`.
+    var stackReviewerTeams: [String] { details?.sidebar.requestedTeamSlugs ?? [] }
+
+    /// "alice, @acme/platform-team" for the reviewers copied to other layers.
+    var stackReviewerNames: String {
+        (stackReviewers.map(ReviewDetails.displayName) + stackReviewerTeams.map { "@" + $0 })
+            .joined(separator: ", ")
+    }
+
+    /// Asks this PR's reviewers to review every layer that nobody has been asked to review.
+    func requestStackReviewers() async {
+        guard let layers = pr.stack?.needingReviewer, !layers.isEmpty else { return }
+        let logins = stackReviewers
+        let teams = stackReviewerTeams
+        guard !logins.isEmpty || !teams.isEmpty else { return }
+        _ = await perform("Review requested on \(PRStack.list(layers.map(\.number)))") { client in
+            for layer in layers {
+                let reviewers = logins.filter { $0.caseInsensitiveCompare(layer.author) != .orderedSame }
+                guard !reviewers.isEmpty || !teams.isEmpty else { continue }
+                try await client.requestReviews(layer.id, logins: reviewers, teams: teams)
+            }
+        }
+    }
+
     func reviewerCandidates() async throws -> [SidebarOption] {
         guard let app else { return [] }
         let logins = app.isDemo ? ["octocat", "hubot", "monalisa"] : try await app.githubClient().reviewerCandidates(

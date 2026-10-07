@@ -468,6 +468,8 @@ public struct SidebarReviewer: Sendable, Hashable, Identifiable {
 public struct PullRequestSidebar: Sendable {
   public var requestedReviewers: [String] = []
   public var requestedTeams: [String] = []
+  /// `org/team-slug` for each requested team, as `requestReviewsByLogin` expects.
+  public var requestedTeamSlugs: [String] = []
   public var assignees: [String] = []
   public var labels: [PullRequestLabel] = []
   public var milestone: String? = nil
@@ -482,13 +484,15 @@ public struct PullRequestSidebar: Sendable {
   public var isSubscribed: Bool { subscription == "SUBSCRIBED" }
 
   public init(
-    requestedReviewers: [String] = [], requestedTeams: [String] = [], assignees: [String] = [],
+    requestedReviewers: [String] = [], requestedTeams: [String] = [], requestedTeamSlugs: [String] = [],
+    assignees: [String] = [],
     labels: [PullRequestLabel] = [], milestone: String? = nil, milestoneNumber: Int? = nil,
     participants: [String] = [], canTriage: Bool = false, subscription: String? = nil,
     locked: Bool = false
   ) {
     self.requestedReviewers = requestedReviewers
     self.requestedTeams = requestedTeams
+    self.requestedTeamSlugs = requestedTeamSlugs
     self.assignees = assignees
     self.labels = labels
     self.milestone = milestone
@@ -927,7 +931,7 @@ public enum DemoReview {
             isPullRequest: false)),
       ],
       sidebar: PullRequestSidebar(
-        requestedReviewers: ["copilot-pull-request-reviewer"], requestedTeams: ["platform-team"],
+        requestedReviewers: ["copilot-pull-request-reviewer"], requestedTeams: ["platform-team"], requestedTeamSlugs: ["acme/platform-team"],
         labels: [
           PullRequestLabel(name: "email", color: "1d76db"),
           PullRequestLabel(name: "rust", color: "dea584"),

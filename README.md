@@ -50,12 +50,16 @@ indicator. Cached reviews are kept in memory for the current app session.
   family as `feature/foo`.
 - **Related PRs**: the review sidebar lists PRs from the same source branch
   and PRs for the same Linear ticket (across repositories); click one to open it.
-- **Stacks**: GitHub's native stacked PRs show a layer chip (`2/3`) and a stack
-  map in the review sidebar (top layer first, trunk at the bottom; click a
-  layer to open it). A PR waits while an open PR below it isn't ready, merging
-  uses GitHub's asynchronous merge and lands every open PR below it in one go
-  (with a confirmation if one of them isn't ready), and Stack is available as
-  an overview grouping and a tab grouping.
+- **Stacks**: GitHub's native stacked PRs show a layer chip (`2/3`, green when
+  every layer is ready) and a stack map in the review sidebar: top layer first,
+  trunk at the bottom, each layer with its status (approved, needs review, no
+  reviewer, checks, conflicts, needs rebase). GitHub only merges a layer once it
+  and every open PR below it meet the trunk's rules, so Mergeport flags layers
+  nobody was asked to review (Needs attention), copies this PR's reviewers and
+  teams to them in one click, points to GitHub's Rebase stack when the stack
+  isn't linear, and only enables "Merge N PRs" when the whole stack below can
+  land. Merging uses GitHub's asynchronous merge. Stack is also an overview
+  and tab grouping.
 - **Grouped tabs**: tabs fill the tab bar and shrink like Chrome's as more
   open: the title goes first, then the target branch, until only the PR number
   is left (beyond that the bar scrolls). New tabs open next to related tabs;

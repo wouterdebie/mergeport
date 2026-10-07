@@ -37,13 +37,13 @@ public enum DemoInbox {
         let stackEntries = [
             PRStack.Entry(id: "demo-455", position: 1, number: 455, title: "Add the tenants table and migrations (CON-230)",
                           url: stackRepo.appendingPathComponent("455"), head: "stack/tenants-schema", base: "main",
-                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN"),
+                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN", checks: .success, reviews: 1),
             PRStack.Entry(id: "demo-456", position: 2, number: 456, title: "Tenant CRUD API (CON-230)",
                           url: stackRepo.appendingPathComponent("456"), head: "stack/tenants-api", base: "stack/tenants-schema",
-                          author: "sam", reviewDecision: "REVIEW_REQUIRED", mergeState: "BLOCKED"),
+                          author: "sam", reviewDecision: "REVIEW_REQUIRED", mergeState: "BLOCKED", checks: .success),
             PRStack.Entry(id: "demo-457", position: 3, number: 457, title: "Tenant admin screens (CON-230)",
                           url: stackRepo.appendingPathComponent("457"), head: "stack/tenants-ui", base: "stack/tenants-api",
-                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN"),
+                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN", checks: .success, reviews: 1),
         ]
         for (number, position) in [(455, 1), (457, 3)] {
             let entry = stackEntries[position - 1]

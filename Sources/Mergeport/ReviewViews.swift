@@ -487,7 +487,7 @@ struct NativeReviewView: View {
       if !related.isEmpty || review.pr.stack != nil {
         sidebarSection("Related PRs") {
           if let stack = review.pr.stack {
-            StackMap(pr: review.pr, stack: stack)
+            StackMap(review: review, pr: review.pr, stack: stack)
           }
           if !related.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
@@ -880,13 +880,16 @@ struct NativeReviewView: View {
               ? "Resolve conflicts on GitHub or locally." : "GitHub is still computing mergeability.")
         if let stack = review.pr.stack {
           Divider()
+          let blocked = stack.blocker
           mergeSection(
-            status: stack.blocker != nil ? .waiting : .success,
-            title: stack.blocker.map { "\($0.displayNumber) below isn't ready to merge" }
+            status: blocked != nil ? .waiting : .success,
+            title: blocked.map { "Can't merge yet: \($0.displayNumber) below — \(($0.problem ?? "not ready").lowercased())" }
               ?? (stack.openBelow.isEmpty
                 ? "Bottom of stack #\(stack.number)"
                 : "Merges \(PRStack.list(stack.mergedTogether(with: review.pr.number))) together"),
-            detail: "Layer \(stack.position) of \(stack.size) into \(stack.base). Merging also merges every open PR below; PRs above are retargeted to \(stack.base).")
+            detail: blocked != nil
+              ? "GitHub only merges a stacked PR when it and every open PR below it meet \(stack.base)'s rules."
+              : "Layer \(stack.position) of \(stack.size) into \(stack.base). Merging also merges every open PR below; PRs above are retargeted to \(stack.base).")
         }
         Divider()
         HStack(spacing: 12) {
@@ -1812,10 +1815,11 @@ struct VerifiedBadge: View {
 struct MergeButton: View {
   @ObservedObject var review: ReviewModel
   var prominent = true
-  @State private var confirmStackMerge = false
-
   private var mergeHelp: String {
     let stack = review.pr.stack
+    if let blocker = stack?.blocker, let problem = blocker.problem {
+      return "Can't merge yet: \(blocker.displayNumber) below — \(problem.lowercased())"
+    }
     let numbers = stack?.mergedTogether(with: review.pr.number) ?? [review.pr.number]
     let target = stack?.base ?? review.pr.base
     return numbers.count > 1
@@ -1825,14 +1829,13 @@ struct MergeButton: View {
 
   var body: some View {
     let methods = review.details?.mergeMethods ?? []
+    // GitHub rejects a stacked merge while any open PR below fails the trunk's rules.
     let enabled = !review.isDemo && !review.isPerforming && review.details?.canMerge == true
+      && review.pr.stack?.blocker == nil
+    let stackCount = review.pr.stack.map { $0.openBelow.count + 1 } ?? 1
     HStack(spacing: 0) {
       Button {
-        if review.pr.stack?.blocker != nil {
-          confirmStackMerge = true
-        } else {
-          Task { await review.merge() }
-        }
+        Task { await review.merge() }
       } label: {
         HStack(spacing: 6) {
           if review.isMerging {
@@ -1840,23 +1843,13 @@ struct MergeButton: View {
             Text("Merging…")
           } else {
             Image(systemName: "arrow.triangle.merge")
-            Text(review.mergeMethod.title)
+            Text(stackCount > 1 ? "\(review.mergeMethod.title) \(stackCount) PRs" : review.mergeMethod.title)
           }
         }.padding(.leading, 12).padding(.trailing, 10).padding(.vertical, 6)
       }
       .buttonStyle(.plain)
       .disabled(!enabled)
       .help(mergeHelp)
-      .confirmationDialog(
-        "Merge the stack below too?", isPresented: $confirmStackMerge
-      ) {
-        Button("\(review.mergeMethod.title) anyway") { Task { await review.merge() } }
-        Button("Cancel", role: .cancel) {}
-      } message: {
-        if let stack = review.pr.stack, let blocker = stack.blocker {
-          Text("Merging \(review.pr.displayNumber) also merges \(PRStack.list(stack.openBelow.map(\.number))). \(blocker.displayNumber) isn't approved or ready yet, so GitHub may reject the merge.")
-        }
-      }
       if methods.count > 1 {
         Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1).padding(.vertical, 4)
         Menu {
@@ -2166,6 +2159,7 @@ struct RelatedPRRow: View {
 /// GitHub's stack map: top layer first, the trunk at the bottom, the current PR highlighted.
 struct StackMap: View {
   @EnvironmentObject var app: AppModel
+  @ObservedObject var review: ReviewModel
   let pr: PullRequest
   let stack: PRStack
 
@@ -2173,7 +2167,7 @@ struct StackMap: View {
     VStack(alignment: .leading, spacing: 2) {
       HStack(spacing: 5) {
         Image(systemName: "square.stack.3d.up.fill")
-        Text("Stack #\(stack.number) · \(stack.size) PRs")
+        Text("Stack #\(stack.number) · \(stack.readinessLabel)")
       }
       .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
       .padding(.horizontal, 6).padding(.bottom, 2)
@@ -2184,33 +2178,101 @@ struct StackMap: View {
         Image(systemName: "arrow.triangle.branch").foregroundStyle(.secondary).frame(width: 16)
         Text(stack.base).font(.caption.monospaced().weight(.semibold)).foregroundStyle(Color.branchBlue)
       }.padding(.horizontal, 6).padding(.vertical, 4)
+      let unrequested = stack.needingReviewer
+      if !unrequested.isEmpty { reviewerCallout(unrequested) }
+      if stack.needsRebase { rebaseCallout }
     }
     .padding(.horizontal, -6)
     .padding(.bottom, 4)
   }
 
+  private func reviewerCallout(_ layers: [PRStack.Entry]) -> some View {
+    let names = review.stackReviewerNames
+    let none = names.isEmpty
+    return callout(
+      symbol: "person.crop.circle.badge.exclamationmark", color: .orange,
+      text: layers.count == 1
+        ? "\(layers[0].displayNumber) has no reviewer. GitHub won't merge the stack until every layer is approved."
+        : "\(PRStack.list(layers.map(\.number))) have no reviewer. GitHub won't merge the stack until every layer is approved."
+    ) {
+      Button(none ? "Add reviewers here first" : "Request \(names)") {
+        Task { await review.requestStackReviewers() }
+      }
+      .disabled(none || review.isDemo || review.isPerforming)
+      .help(none
+        ? "Request reviewers on this PR, then copy them to the other layers."
+        : "Request review from \(names) on \(PRStack.list(layers.map(\.number))).")
+    }
+  }
+
+  private var rebaseCallout: some View {
+    callout(
+      symbol: "arrow.triangle.2.circlepath", color: .orange,
+      text: "The stack isn't linear anymore. GitHub needs a rebase before it can merge."
+    ) {
+      Link("Rebase stack on GitHub", destination: pr.url)
+    }
+  }
+
+  private func callout<Action: View>(
+    symbol: String, color: Color, text: String, @ViewBuilder action: () -> Action
+  ) -> some View {
+    VStack(alignment: .leading, spacing: 6) {
+      HStack(alignment: .firstTextBaseline, spacing: 6) {
+        Image(systemName: symbol).foregroundStyle(color)
+        Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
+      }
+      action().controlSize(.small)
+    }
+    .padding(8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(color.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.3)))
+    .padding(.horizontal, 6).padding(.top, 4)
+  }
+
+  static func status(_ entry: PRStack.Entry) -> (symbol: String, color: Color) {
+    switch entry.state {
+    case "MERGED": return ("arrow.triangle.merge", YardPalette.merged)
+    case "CLOSED": return ("xmark.circle", YardPalette.closed)
+    default: break
+    }
+    if entry.isDraft { return ("pencil.circle", .secondary) }
+    switch entry.problem {
+    case nil: return ("checkmark.circle.fill", .green)
+    case "Merge conflicts", "Changes requested", "Checks failing": return ("exclamationmark.circle.fill", .red)
+    case "No reviewer", "Needs rebase": return ("exclamationmark.circle", .orange)
+    default: return ("clock", YardPalette.blue)
+    }
+  }
+
   private func row(_ entry: PRStack.Entry, member: PullRequest) -> some View {
     let current = entry.number == pr.number
-    let status = YardPalette.status(member)
+    let status = Self.status(entry)
     return Button {
       if !current { app.open(member) }
     } label: {
-      HStack(spacing: 7) {
-        Text(String(entry.position)).font(.caption2.monospacedDigit().weight(.bold))
-          .foregroundStyle(current ? Color.white : .secondary)
-          .frame(width: 16, height: 16)
-          .background(current ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
-        Image(systemName: status.symbol).foregroundStyle(status.color)
-        Text(entry.displayNumber).monospacedDigit().foregroundStyle(.secondary)
-        Text(entry.title).lineLimit(1).truncationMode(.tail)
-          .fontWeight(current ? .semibold : .regular)
-        Spacer(minLength: 0)
+      VStack(alignment: .leading, spacing: 1) {
+        HStack(spacing: 7) {
+          Text(String(entry.position)).font(.caption2.monospacedDigit().weight(.bold))
+            .foregroundStyle(current ? Color.white : .secondary)
+            .frame(width: 16, height: 16)
+            .background(current ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+          Image(systemName: status.symbol).foregroundStyle(status.color)
+          Text(entry.displayNumber).monospacedDigit().foregroundStyle(.secondary)
+          Text(entry.title).lineLimit(1).truncationMode(.tail)
+            .fontWeight(current ? .semibold : .regular)
+          Spacer(minLength: 0)
+        }
+        Text("\(entry.statusLabel) · \(entry.author)")
+          .font(.caption).foregroundStyle(entry.problem == nil ? Color.secondary : status.color)
+          .padding(.leading, 23 + 7 + 16)
       }
       .padding(.horizontal, 6).padding(.vertical, 5)
       .background(current ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .help("\(entry.displayNumber) \(entry.title)\n\(entry.head) → \(entry.base) · \(member.state == "OPEN" ? member.waitingReason : member.state.capitalized)")
+    .help("\(entry.displayNumber) \(entry.title)\n\(entry.head) → \(entry.base) · \(entry.statusLabel)")
   }
 }

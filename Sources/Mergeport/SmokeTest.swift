@@ -143,7 +143,8 @@ enum SmokeTest {
         for tab in model.tabs where !before.contains(tab.id) { model.closeTab(tab.id) }
         model.selectTab(nil)
         guard let top = model.pullRequests.first(where: { $0.number == 457 }),
-          let stack = top.stack, stack.blocker?.number == 456, top.stage == .waiting,
+          let stack = top.stack, stack.blocker?.number == 456, top.stage == .attention,
+          stack.needingReviewer.map(\.number) == [456], stack.readinessLabel == "2 of 3 ready",
           stack.mergedTogether(with: 457) == [455, 456, 457],
           let middle = stack.entries.first(where: { $0.number == 456 }),
           model.pullRequest(for: middle, stackOf: top).author == "sam",

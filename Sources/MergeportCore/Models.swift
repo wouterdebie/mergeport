@@ -153,8 +153,10 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
            checks == .success || checks == .none,
            reviewDecision == nil || reviewDecision == "APPROVED" {
             // Merging a stacked PR also merges the open PRs below it, so they must be ready too.
-            return stack?.blocker == nil ? .ready : .waiting
+            if stack?.blocker == nil { return .ready }
         }
+        // A stack only lands once every layer is approved; catch unrequested reviews early.
+        if stack?.needingReviewer.isEmpty == false { return .attention }
         return .waiting
     }
 
@@ -164,10 +166,18 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         if mergeable == "CONFLICTING" { return "Merge conflicts" }
         if reviewDecision == "CHANGES_REQUESTED" { return "Changes requested" }
         if blockingUnresolved > 0 { return "\(blockingUnresolved) unresolved review threads" }
+        if let layers = stack?.needingReviewer, !layers.isEmpty, stage != .ready {
+            return layers.count == 1
+                ? "\(layers[0].displayNumber) in the stack has no reviewer"
+                : "\(PRStack.list(layers.map(\.number))) in the stack have no reviewer"
+        }
         if checks == .failure { return checks.title }
         if reviewDecision == "REVIEW_REQUIRED" { return "Waiting for approval" }
         if checks == .pending || checks == .unknown { return checks.title }
-        if let blocker = stack?.blocker { return "Waiting on \(blocker.displayNumber) below in the stack" }
+        if let blocker = stack?.blocker, let problem = blocker.problem {
+            return "Waiting on \(blocker.displayNumber) below: \(problem.lowercased())"
+        }
+        if stack?.needsRebase == true { return "Stack needs a rebase on GitHub" }
         switch mergeState {
         case "BEHIND": return "Branch needs updating"
         case "BLOCKED": return "Blocked by repository rules"
