@@ -15,23 +15,44 @@ public struct GitHubClient: Sendable {
     return result.viewer
   }
 
-  public func snapshot(repositories: [String]) async throws -> InboxSnapshot {
+  public func snapshot(
+    repositories: [String],
+    onListed: (@Sendable (InboxSnapshot) async -> Void)? = nil
+  ) async throws -> InboxSnapshot {
     let viewer = try await viewer()
-    var collected: [String: PullRequest] = [:]
-    let mine = try await search(
-      "is:pr is:open author:\(viewer.login) sort:updated-desc", viewer: viewer.login)
-    let requested = try await search(
-      "is:pr is:open review-requested:\(viewer.login) sort:updated-desc", viewer: viewer.login)
+    var nodes: [String: PRNode] = [:]
+    let mine = try await searchNodes("is:pr is:open author:\(viewer.login) sort:updated-desc")
+    let requested = try await searchNodes(
+      "is:pr is:open review-requested:\(viewer.login) sort:updated-desc")
     let requestedIDs = Set(requested.map(\.id))
-    for pr in mine + requested { collected[pr.id] = pr }
+    for node in mine + requested { nodes[node.id] = node }
     for repository in repositories {
-      for pr in try await repositoryPullRequests(repository, viewer: viewer.login) {
-        collected[pr.id] = pr
-      }
+      for node in try await repositoryNodes(repository) { nodes[node.id] = node }
     }
-    for id in requestedIDs { collected[id]?.reviewRequested = true }
-    return InboxSnapshot(
-      viewer: viewer, pullRequests: collected.values.sorted { $0.updatedAt > $1.updatedAt })
+    func pullRequests(from hydrated: [String: PullRequest]) -> [PullRequest] {
+      var merged = hydrated
+      for node in nodes.values where merged[node.id] == nil {
+        merged[node.id] = node.listed(viewer: viewer.login)
+      }
+      for id in requestedIDs { merged[id]?.reviewRequested = true }
+      return merged.values.sorted { $0.updatedAt > $1.updatedAt }
+    }
+    let followed = Set(repositories.map { $0.lowercased() })
+    var hydrated: [String: PullRequest] = [:]
+    if let onListed {
+      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)))
+    }
+    let priority = nodes.values.filter {
+      requestedIDs.contains($0.id) || followed.contains($0.repository.nameWithOwner.lowercased())
+    }
+    for node in priority { hydrated[node.id] = try await hydrate(node, viewer: viewer.login) }
+    if let onListed, !priority.isEmpty {
+      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)))
+    }
+    for node in nodes.values where hydrated[node.id] == nil {
+      hydrated[node.id] = try await hydrate(node, viewer: viewer.login)
+    }
+    return InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated))
   }
 
   public func pullRequest(repository: String, number: Int, viewer: String) async throws
@@ -58,17 +79,17 @@ public struct GitHubClient: Sendable {
     return try await hydrate(node, viewer: viewer)
   }
 
-  private func search(_ text: String, viewer: String) async throws -> [PullRequest] {
+  private func searchNodes(_ text: String) async throws -> [PRNode] {
     struct Result: Decodable { let search: SearchConnection }
     var cursor: String?
-    var result: [PullRequest] = []
+    var result: [PRNode] = []
     repeat {
       let page: Result = try await query(
         """
         query($query: String!, $cursor: String) {
           search(query: $query, type: ISSUE, first: 25, after: $cursor) {
             issueCount pageInfo { hasNextPage endCursor }
-            nodes { ... on PullRequest { \(Self.fields) } }
+            nodes { ... on PullRequest { \(Self.summaryFields) } }
           }
         }
         """, variables: ["query": .string(text), "cursor": cursor.map(JSONValue.string) ?? .null])
@@ -77,22 +98,19 @@ public struct GitHubClient: Sendable {
           "GitHub search has more than 1,000 results and would be incomplete. Narrow the open PR queue before syncing."
         )
       }
-      for node in page.search.nodes.compactMap({ $0 }) {
-        result.append(try await hydrate(node, viewer: viewer))
-      }
+      result.append(contentsOf: page.search.nodes.compactMap { $0 })
       cursor = try page.search.pageInfo.nextCursor()
     } while cursor != nil
     return result
   }
 
-  private func repositoryPullRequests(_ name: String, viewer: String) async throws -> [PullRequest]
-  {
+  private func repositoryNodes(_ name: String) async throws -> [PRNode] {
     let validated = try RepositoryName.validate(name)
     let parts = validated.split(separator: "/")
     struct Repository: Decodable { let pullRequests: PRConnection }
     struct Result: Decodable { let repository: Repository? }
     var cursor: String?
-    var result: [PullRequest] = []
+    var result: [PRNode] = []
     repeat {
       let page: Result = try await query(
         """
@@ -100,7 +118,7 @@ public struct GitHubClient: Sendable {
           repository(owner: $owner, name: $name) {
             pullRequests(states: OPEN, first: 25, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
               pageInfo { hasNextPage endCursor }
-              nodes { \(Self.fields) }
+              nodes { \(Self.summaryFields) }
             }
           }
         }
@@ -114,22 +132,73 @@ public struct GitHubClient: Sendable {
           "Cannot access \(name). Check its name, repository permissions and organization SSO authorization."
         )
       }
-      for node in repository.pullRequests.nodes.compactMap({ $0 }) {
-        result.append(try await hydrate(node, viewer: viewer))
-      }
+      result.append(contentsOf: repository.pullRequests.nodes.compactMap { $0 })
       cursor = try repository.pullRequests.pageInfo.nextCursor()
     } while cursor != nil
     return result
   }
 
+  /// Review threads, reviews, requests, mergeability and checks for one PR.
+  /// Computing mergeability for a page of search results makes GitHub's gateway time out and return HTTP 502.
+  private struct InboxConnections {
+    let reviewRequests: PRNode.ReviewRequests
+    let reviews: PRNode.Reviews
+    let reviewThreads: ThreadConnection
+    let mergeable: String
+    let mergeState: String
+    let checks: String?
+    let stack: PRStack?
+  }
+
+  private func loadConnections(_ node: PRNode) async throws -> InboxConnections {
+    if let reviewRequests = node.reviewRequests, let reviews = node.reviews,
+      let reviewThreads = node.reviewThreads,
+      let mergeable = node.mergeable, let mergeState = node.mergeStateStatus
+    {
+      return InboxConnections(
+        reviewRequests: reviewRequests, reviews: reviews, reviewThreads: reviewThreads,
+        mergeable: mergeable, mergeState: mergeState, checks: node.rollupState,
+        stack: node.stackModel)
+    }
+    struct Loaded: Decodable {
+      let reviewRequests: PRNode.ReviewRequests
+      let reviews: PRNode.Reviews
+      let reviewThreads: ThreadConnection
+      let mergeable: String?
+      let mergeStateStatus: String?
+      let commits: PRNode.Commits?
+      let stackEntry: PRNode.StackPosition?
+      let stack: PRNode.StackNode?
+    }
+    struct Result: Decodable { let node: Loaded? }
+    let page: Result = try await query(
+      """
+      query($id: ID!) {
+        node(id: $id) { ... on PullRequest { \(Self.connectionFields) } }
+      }
+      """, variables: ["id": .string(node.id)])
+    guard let loaded = page.node else {
+      throw MergeportError.message(
+        "A PR disappeared while loading its review status. Refresh to try again.")
+    }
+    return InboxConnections(
+      reviewRequests: loaded.reviewRequests, reviews: loaded.reviews,
+      reviewThreads: loaded.reviewThreads,
+      mergeable: loaded.mergeable ?? node.mergeable ?? "UNKNOWN",
+      mergeState: loaded.mergeStateStatus ?? node.mergeStateStatus ?? "UNKNOWN",
+      checks: loaded.commits?.rollupState ?? node.rollupState,
+      stack: PRNode.makeStack(entry: loaded.stackEntry, stack: loaded.stack) ?? node.stackModel)
+  }
+
   private func hydrate(_ node: PRNode, viewer: String) async throws -> PullRequest {
+    let connections = try await loadConnections(node)
     struct ThreadNode: Decodable { let reviewThreads: ThreadConnection }
     struct ThreadResult: Decodable { let node: ThreadNode? }
     struct RequestNode: Decodable { let reviewRequests: PRNode.ReviewRequests }
     struct RequestResult: Decodable { let node: RequestNode? }
-    var unresolved = node.reviewThreads.unresolved.count
-    var copilotUnresolved = node.reviewThreads.unresolved.filter(\.isCopilot).count
-    var cursor = try node.reviewThreads.pageInfo.nextCursor()
+    var unresolved = connections.reviewThreads.unresolved.count
+    var copilotUnresolved = connections.reviewThreads.unresolved.filter(\.isCopilot).count
+    var cursor = try connections.reviewThreads.pageInfo.nextCursor()
     while let after = cursor {
       let page: ThreadResult = try await query(
         """
@@ -149,8 +218,8 @@ public struct GitHubClient: Sendable {
       copilotUnresolved += threads.unresolved.filter(\.isCopilot).count
       cursor = try threads.pageInfo.nextCursor()
     }
-    var requested = node.reviewRequests.nodes.compactMap { $0?.requestedReviewer?.login }
-    cursor = try node.reviewRequests.pageInfo.nextCursor()
+    var requested = connections.reviewRequests.nodes.compactMap { $0?.requestedReviewer?.login }
+    cursor = try connections.reviewRequests.pageInfo.nextCursor()
     while let after = cursor {
       let page: RequestResult = try await query(
         """
@@ -171,7 +240,10 @@ public struct GitHubClient: Sendable {
       cursor = try requests.pageInfo.nextCursor()
     }
     return node.model(
-      viewer: viewer, unresolved: unresolved, copilotUnresolved: copilotUnresolved, requested: requested)
+      viewer: viewer, reviews: connections.reviews, unresolved: unresolved,
+      copilotUnresolved: copilotUnresolved, requested: requested,
+      mergeable: connections.mergeable, mergeState: connections.mergeState,
+      checks: connections.checks, stack: connections.stack)
   }
 
   private enum JSONValue: Encodable {
@@ -195,7 +267,26 @@ public struct GitHubClient: Sendable {
     let variables: [String: JSONValue]
   }
 
+  /// GitHub's gateway sometimes answers a valid read with 502/503/504. Retry those.
+  /// Mutations are not retried: a 502 can arrive after the write already landed.
+  private struct GatewayFailure: Error { let error: MergeportError }
+
   private func query<T: Decodable>(_ query: String, variables: [String: JSONValue] = [:])
+    async throws -> T
+  {
+    let reads = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("query")
+    var attempt = 0
+    while true {
+      do { return try await performQuery(query, variables: variables) }
+      catch let failure as GatewayFailure {
+        attempt += 1
+        guard reads, attempt < 3 else { throw failure.error }
+        try await Task.sleep(for: .milliseconds(200 * attempt))
+      }
+    }
+  }
+
+  private func performQuery<T: Decodable>(_ query: String, variables: [String: JSONValue])
     async throws -> T
   {
     var request = URLRequest(url: URL(string: "https://api.github.com/graphql")!)
@@ -216,7 +307,17 @@ public struct GitHubClient: Sendable {
           "GitHub denied this request or its rate limit was reached. Check OAuth/SSO access, or wait before refreshing."
         )
       }
-      throw MergeportError.message("GitHub request failed (HTTP \(http.statusCode)).")
+      let message: String
+      if http.statusCode == 502 || http.statusCode == 503 || http.statusCode == 504 {
+        message = "GitHub request failed (HTTP \(http.statusCode)). GitHub had a server error; try again shortly."
+      } else {
+        message = "GitHub request failed (HTTP \(http.statusCode))."
+      }
+      let error = MergeportError.message(message)
+      if http.statusCode == 502 || http.statusCode == 503 || http.statusCode == 504 {
+        throw GatewayFailure(error: error)
+      }
+      throw error
     }
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
@@ -228,10 +329,16 @@ public struct GitHubClient: Sendable {
     return result
   }
 
-  private static let fields = """
+  /// Scalars only. `mergeable` and check rollups are computed per pull request: a page of them
+  /// under search exceeds GitHub's gateway limit and returns HTTP 502.
+  private static let summaryFields = """
     id number title url isDraft state updatedAt additions deletions
     author { login avatarUrl } repository { nameWithOwner } headRefName baseRefName
-    headRepository { nameWithOwner } headRefOid reviewDecision mergeable mergeStateStatus
+    headRepository { nameWithOwner } headRefOid reviewDecision
+    """
+
+  private static let connectionFields = """
+    mergeable mergeStateStatus
     commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
     reviewRequests(first: 100) {
       pageInfo { hasNextPage endCursor }
@@ -260,6 +367,11 @@ public struct GitHubClient: Sendable {
         }
       }
     }
+    """
+
+  private static let fields = """
+    \(summaryFields)
+    \(connectionFields)
     """
 }
 
@@ -349,6 +461,9 @@ private struct PRNode: Decodable {
       let commit: Commit
     }
     let nodes: [Node?]
+    var rollupState: String? {
+      nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state
+    }
   }
   let id: String
   let number: Int
@@ -366,12 +481,14 @@ private struct PRNode: Decodable {
   let baseRefName: String
   let headRefOid: String
   let reviewDecision: String?
-  let mergeable: String
-  let mergeStateStatus: String
-  let commits: Commits
-  let reviewRequests: ReviewRequests
-  let reviews: Reviews
-  let reviewThreads: ThreadConnection
+  /// Absent on inbox list queries. Mergeability for a page of results makes GitHub return HTTP 502.
+  let mergeable: String?
+  let mergeStateStatus: String?
+  let commits: Commits?
+  /// Absent on inbox list queries. Those load connections one PR at a time so search does not 502.
+  let reviewRequests: ReviewRequests?
+  let reviews: Reviews?
+  let reviewThreads: ThreadConnection?
   let stackEntry: StackPosition?
   let stack: StackNode?
 
@@ -407,8 +524,10 @@ private struct PRNode: Decodable {
     let entries: Entries
   }
 
-  var stackModel: PRStack? {
-    guard let stack, let position = stackEntry?.position else { return nil }
+  var stackModel: PRStack? { Self.makeStack(entry: stackEntry, stack: stack) }
+
+  static func makeStack(entry: StackPosition?, stack: StackNode?) -> PRStack? {
+    guard let stack, let position = entry?.position else { return nil }
     let entries = stack.entries.nodes.compactMap { $0 }.compactMap { entry -> PRStack.Entry? in
       guard let pr = entry.pullRequest else { return nil }
       return PRStack.Entry(
@@ -424,7 +543,23 @@ private struct PRNode: Decodable {
       entries: entries)
   }
 
-  func model(viewer: String, unresolved: Int, copilotUnresolved: Int, requested: [String]) -> PullRequest {
+  var rollupState: String? { commits?.rollupState }
+
+  func listed(viewer: String) -> PullRequest {
+    PullRequest(
+      id: id, number: number, title: title, repository: repository.nameWithOwner, url: url,
+      author: author?.login ?? "ghost", head: headRefName,
+      headRepository: headRepository?.nameWithOwner, base: baseRefName,
+      updatedAt: updatedAt, isDraft: isDraft, state: state, reviewDecision: reviewDecision,
+      mergeable: mergeable ?? "UNKNOWN", mergeState: mergeStateStatus ?? "UNKNOWN",
+      checks: CheckState(graphQL: rollupState), additions: additions, deletions: deletions,
+      authorAvatarURL: author?.avatarUrl, stack: stackModel)
+  }
+
+  func model(
+    viewer: String, reviews: Reviews, unresolved: Int, copilotUnresolved: Int, requested: [String],
+    mergeable: String, mergeState: String, checks: String?, stack: PRStack?
+  ) -> PullRequest {
     let latestCopilot = reviews.nodes.compactMap { $0 }.last {
       CopilotState.isCopilot($0.author?.login ?? "") && $0.state != "PENDING"
         && $0.state != "DISMISSED"
@@ -443,11 +578,10 @@ private struct PRNode: Decodable {
       headRepository: headRepository?.nameWithOwner ?? "deleted:\(id)", base: baseRefName,
       updatedAt: updatedAt, isDraft: isDraft, state: state,
       reviewRequested: requested.contains { $0.caseInsensitiveCompare(viewer) == .orderedSame },
-      reviewDecision: reviewDecision, mergeable: mergeable, mergeState: mergeStateStatus,
-      checks: CheckState(
-        graphQL: commits.nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state),
+      reviewDecision: reviewDecision, mergeable: mergeable, mergeState: mergeState,
+      checks: CheckState(graphQL: checks),
       unresolvedThreads: unresolved, unresolvedCopilotThreads: copilotUnresolved, copilot: copilot, additions: additions, deletions: deletions,
-      authorAvatarURL: author?.avatarUrl, stack: stackModel
+      authorAvatarURL: author?.avatarUrl, stack: stack
     )
   }
 }
