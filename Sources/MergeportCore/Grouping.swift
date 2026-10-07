@@ -200,12 +200,28 @@ public struct GroupingPreferences: Codable, Equatable, Sendable {
             if groups[id] != nil { groups[id]?.pullRequests.append(pr) }
             else { groups[id] = PullRequestGroup(id: id, title: title, subtitle: subtitle, symbol: symbol, pullRequests: [pr], isUnmatched: unmatched) }
         }
-        return groups.values.sorted {
+        // Groups surface recent activity first; cards inside a group read by repository and number.
+        return groups.values.map {
+            var group = $0
+            group.pullRequests.sort(by: PullRequest.overviewOrder)
+            return group
+        }.sorted {
             if $0.isUnmatched != $1.isUnmatched { return !$0.isUnmatched }
             if mode == .repository { return $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-            let left = $0.pullRequests.first?.updatedAt ?? .distantPast
-            let right = $1.pullRequests.first?.updatedAt ?? .distantPast
+            let left = $0.pullRequests.map(\.updatedAt).max() ?? .distantPast
+            let right = $1.pullRequests.map(\.updatedAt).max() ?? .distantPast
             return left == right ? $0.id < $1.id : left > right
+        }
+    }
+}
+
+extension PullRequest {
+    /// Overview card order: repository (case-insensitive), then PR number.
+    public static func overviewOrder(_ lhs: PullRequest, _ rhs: PullRequest) -> Bool {
+        switch lhs.repository.compare(rhs.repository, options: [.caseInsensitive, .numeric]) {
+        case .orderedAscending: return true
+        case .orderedDescending: return false
+        case .orderedSame: return lhs.number < rhs.number
         }
     }
 }

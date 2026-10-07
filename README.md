@@ -38,9 +38,10 @@ indicator. Cached reviews are kept in memory for the current app session.
 
 - **Personal inbox**: your open PRs and requested reviews across repositories,
   including team requests. Follow `owner/repository` entries to include every
-  open PR in those repos. Overview rows, review tabs and review headers use
-  `#<PR number> owner/repository <title>`, without digit separators. Tabs keep
-  the target branch visible separately.
+  open PR in those repos. Overview cards and review headers lead with
+  `#<PR number>`, the ticket, `owner/repository` and the target branch, without
+  digit separators. Cards are sorted by repository, then PR number; groups keep
+  the most recently active first.
 - **Workflow**: Draft, Your review, Needs attention, Waiting, and Ready to merge.
   Filter by ownership, workflow, repository, title, PR number or branch.
 - **Branch siblings**: staging/main PRs from the same feature branch and source

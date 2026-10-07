@@ -138,7 +138,7 @@ final class AppModel: ObservableObject {
                 && (repositoryFilter == nil || $0.repository == repositoryFilter)
                 && (search.isEmpty || "\($0.title) \($0.repository) #\($0.number) \($0.head) \($0.base) \($0.author)"
                     .localizedCaseInsensitiveContains(search))
-        }.sorted { $0.updatedAt > $1.updatedAt }
+        }.sorted(by: PullRequest.overviewOrder)
     }
 
     func start() async {

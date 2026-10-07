@@ -93,7 +93,7 @@ struct CopilotStatusBadge: View {
     }
 }
 
-/// Repo, number, ticket and target branch: the facts to spot at a glance.
+/// Number, ticket, repo and target branch: the facts to spot at a glance.
 struct PRKeyFacts: View {
     let pr: PullRequest
     let ticket: String?
@@ -105,12 +105,6 @@ struct PRKeyFacts: View {
         let owner = pr.repository.split(separator: "/").first.map { "\($0)/" } ?? ""
         let name = pr.repository.split(separator: "/").last.map(String.init) ?? pr.repository
         HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                Image(systemName: "shippingbox.fill").foregroundStyle(.secondary)
-                (Text(owner).foregroundStyle(.secondary) + Text(name).fontWeight(.bold))
-            }
-            .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
             Text("#" + String(pr.number)).fontWeight(.semibold).monospaced().foregroundStyle(.tint)
             if let ticket {
                 if let issue, let openIssue {
@@ -121,6 +115,12 @@ struct PRKeyFacts: View {
                     ticketChip(ticket, linked: false)
                 }
             }
+            HStack(spacing: 4) {
+                Image(systemName: "shippingbox.fill").foregroundStyle(.secondary)
+                (Text(owner).foregroundStyle(.secondary) + Text(name).fontWeight(.bold))
+            }
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
             HStack(spacing: 4) {
                 Image(systemName: "arrow.right").font(.system(size: large ? 10 : 9, weight: .bold))
                 Text(pr.base).fontWeight(.bold).monospaced()

@@ -9,6 +9,16 @@ struct GroupingTests {
                     headRepository: fork ?? repo, base: number == 1 ? "main" : "staging")
     }
 
+    @Test func cardsSortByRepositoryThenNumberInsideGroups() throws {
+        var preferences = GroupingPreferences()
+        preferences.mode = .none
+        let prs = [pr(12, head: "x", repo: "acme/web"), pr(3, head: "y", repo: "Acme/api"),
+                   pr(10, head: "z", repo: "acme/web"), pr(9, head: "w", repo: "acme/api")]
+        let order = try preferences.groups(for: prs).first?.pullRequests.map { "\($0.repository)#\($0.number)" }
+        #expect(order == ["Acme/api#3", "acme/api#9", "acme/web#10", "acme/web#12"])
+        #expect(prs.sorted(by: PullRequest.overviewOrder).map(\.number) == [3, 9, 10, 12])
+    }
+
     @Test func reusableBranchRulesGroupFutureBranchesWithoutCreatingAliases() throws {
         var preferences = GroupingPreferences()
         preferences.mode = .branchGroups
