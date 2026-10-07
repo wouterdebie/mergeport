@@ -50,6 +50,12 @@ indicator. Cached reviews are kept in memory for the current app session.
   family as `feature/foo`.
 - **Related PRs**: the review sidebar lists PRs from the same source branch
   and PRs for the same Linear ticket (across repositories); click one to open it.
+- **Stacks**: GitHub's native stacked PRs show a layer chip (`2/3`) and a stack
+  map in the review sidebar (top layer first, trunk at the bottom; click a
+  layer to open it). A PR waits while an open PR below it isn't ready, merging
+  uses GitHub's asynchronous merge and lands every open PR below it in one go
+  (with a confirmation if one of them isn't ready), and Stack is available as
+  an overview grouping and a tab grouping.
 - **Grouped tabs**: tabs fill the tab bar and shrink like Chrome's as more
   open: the title goes first, then the target branch, until only the PR number
   is left (beyond that the bar scrolls). New tabs open next to related tabs;
@@ -57,7 +63,7 @@ indicator. Cached reviews are kept in memory for the current app session.
   grouped by in Settings › Grouping › Review tabs (default: ticket or source
   branch). Click anywhere on a tab to select it.
 - **Grouping**: repository, source branch, reusable branch groups, ticket
-  identifier, or an ungrouped list. Configurable suffix rules group ephemeral
+  identifier, GitHub stack, or an ungrouped list. Configurable suffix rules group ephemeral
   `<branch>`, `<branch>-staging` and `<branch>-test` branches without creating
   manual aliases. Ticket prefixes such as `CON-` and `ENG-` are configurable;
   ticket groups can span repositories. Filters apply before grouping.

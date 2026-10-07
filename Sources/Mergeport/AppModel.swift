@@ -515,24 +515,47 @@ final class AppModel: ObservableObject {
     }
 
     /// PRs worth jumping to from a review: the same branch into other bases (staging/main),
-    /// then anything sharing its ticket, in any followed repository.
+    /// then anything sharing its ticket, in any followed repository. Stack members are listed
+    /// separately in the stack map, so they're left out here.
     func relatedPRs(_ pr: PullRequest) -> [PullRequest] {
-        let branch = siblings(pr)
+        let branch = siblings(pr).filter { !sameStack(pr, $0) }
         let ticket = ticket(for: pr)
         let sameTicket = ticket.map { ticket in
             pullRequests.filter { other in
                 !(other.repository == pr.repository && other.number == pr.number)
                     && !branch.contains { $0.id == other.id }
+                    && !sameStack(pr, other)
                     && self.ticket(for: other) == ticket
             }.sorted(by: PullRequest.overviewOrder)
         } ?? []
         return branch + sameTicket
     }
 
-    /// Same source branch (staging/main pair) or same Linear ticket, as in Related PRs.
+    func sameStack(_ a: PullRequest, _ b: PullRequest) -> Bool {
+        guard let left = a.stack, let right = b.stack else { return false }
+        return left.number == right.number && a.repository.lowercased() == b.repository.lowercased()
+    }
+
+    /// The inbox copy of a stack member when we have it; otherwise a PR built from the stack entry
+    /// (e.g. someone else's PR in the middle of your stack) so it can still open in a tab.
+    func pullRequest(for entry: PRStack.Entry, stackOf pr: PullRequest) -> PullRequest {
+        let tabbed = tabs.map(\.pr)
+        if let known = (pullRequests + tabbed).first(where: {
+            $0.repository.lowercased() == pr.repository.lowercased() && $0.number == entry.number
+        }) { return known }
+        var stack = pr.stack
+        stack?.position = entry.position
+        return PullRequest(
+            id: entry.id, number: entry.number, title: entry.title, repository: pr.repository, url: entry.url,
+            author: entry.author, head: entry.head, headRepository: pr.repository, base: entry.base,
+            isDraft: entry.isDraft, state: entry.state, reviewDecision: entry.reviewDecision,
+            mergeState: entry.mergeState, stack: stack)
+    }
+
+    /// Same source branch (staging/main pair), same GitHub stack or same Linear ticket.
     func isRelated(_ a: PullRequest, _ b: PullRequest) -> Bool {
         guard a.id != b.id else { return false }
-        if sameBranch(a, b) { return true }
+        if sameBranch(a, b) || sameStack(a, b) { return true }
         guard let ticket = ticket(for: a) else { return false }
         return ticket == self.ticket(for: b)
     }
@@ -543,6 +566,7 @@ final class AppModel: ObservableObject {
         case .related: return isRelated(a, b)
         case .ticket: return ticket(for: a).map { $0 == ticket(for: b) } ?? false
         case .branch: return sameBranch(a, b)
+        case .stack: return sameStack(a, b)
         case .repository: return a.repository.lowercased() == b.repository.lowercased()
         case .none: return false
         }
@@ -556,10 +580,14 @@ final class AppModel: ObservableObject {
         switch tabGrouping {
         case .ticket: return ticket(for: first)
         case .branch: return canonicalBranch(first)
+        case .stack: return first.stack.map { "Stack #\($0.number)" }
         case .repository: return first.repository.split(separator: "/").last.map(String.init)
         case .none: return nil
         case .related:
             if tickets.count == 1, let ticket = tickets.first ?? nil { return ticket }
+            if let stack = first.stack, prs.allSatisfy({ sameStack(first, $0) || $0.id == first.id }) {
+                return "Stack #\(stack.number)"
+            }
             if branches.count == 1 { return branches.first }
             return ticket(for: first) ?? canonicalBranch(first)
         }

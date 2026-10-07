@@ -32,6 +32,25 @@ public enum DemoInbox {
             pr(438, "Use workload identity for scheduled jobs (CON-215)", "infra/workload-identity", "main",
                decision: "APPROVED", state: "CLEAN", copilotThreads: 2)
         ]
+        // A GitHub stack: #455 (bottom) ← #456 (sam's, not in your inbox) ← #457 (top).
+        let stackRepo = URL(string: "https://github.com/\(repo)/pull/")!
+        let stackEntries = [
+            PRStack.Entry(id: "demo-455", position: 1, number: 455, title: "Add the tenants table and migrations (CON-230)",
+                          url: stackRepo.appendingPathComponent("455"), head: "stack/tenants-schema", base: "main",
+                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN"),
+            PRStack.Entry(id: "demo-456", position: 2, number: 456, title: "Tenant CRUD API (CON-230)",
+                          url: stackRepo.appendingPathComponent("456"), head: "stack/tenants-api", base: "stack/tenants-schema",
+                          author: "sam", reviewDecision: "REVIEW_REQUIRED", mergeState: "BLOCKED"),
+            PRStack.Entry(id: "demo-457", position: 3, number: 457, title: "Tenant admin screens (CON-230)",
+                          url: stackRepo.appendingPathComponent("457"), head: "stack/tenants-ui", base: "stack/tenants-api",
+                          author: "you", reviewDecision: "APPROVED", mergeState: "CLEAN"),
+        ]
+        for (number, position) in [(455, 1), (457, 3)] {
+            let entry = stackEntries[position - 1]
+            var member = pr(number, entry.title, entry.head, entry.base, decision: "APPROVED", state: "CLEAN")
+            member.stack = PRStack(number: 7, base: "main", size: 3, position: position, entries: stackEntries)
+            prs.append(member)
+        }
         var second = pr(87, "Expose structured audit events (CON-205)", "feature/audit", "main",
                         author: "sam", requested: true, decision: "REVIEW_REQUIRED")
         second.repository = "acme/terraform"

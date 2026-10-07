@@ -205,6 +205,15 @@ struct PRKeyFacts: View {
             .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.branchBlue.opacity(0.4)))
             .help("Target branch")
+            if let stack = pr.stack {
+                HStack(spacing: 4) {
+                    Image(systemName: "square.stack.3d.up.fill").foregroundStyle(.secondary)
+                    Text(stack.positionLabel).fontWeight(.semibold).monospacedDigit()
+                }
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                .help("Stack #\(stack.number): layer \(stack.position) of \(stack.size), into \(stack.base)")
+            }
         }
         .font(.system(size: large ? 13 : 12)).lineLimit(1).textSelection(.enabled)
     }

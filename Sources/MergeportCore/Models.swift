@@ -94,6 +94,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public var additions: Int
     public var deletions: Int
     public var authorAvatarURL: URL?
+    /// GitHub stacked PR membership; nil when the PR isn't stacked (or from older saved workspaces).
+    public var stack: PRStack?
 
     public init(
         id: String, number: Int, title: String, repository: String, url: URL,
@@ -102,7 +104,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         reviewDecision: String? = nil, mergeable: String = "UNKNOWN", mergeState: String = "UNKNOWN",
         checks: CheckState = .unknown, unresolvedThreads: Int = 0, unresolvedCopilotThreads: Int = 0,
         copilot: CopilotState = .notRequested, additions: Int = 0, deletions: Int = 0,
-        authorAvatarURL: URL? = nil
+        authorAvatarURL: URL? = nil, stack: PRStack? = nil
     ) {
         self.id = id
         self.number = number
@@ -127,6 +129,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         self.additions = additions
         self.deletions = deletions
         self.authorAvatarURL = authorAvatarURL
+        self.stack = stack
     }
 
     public var displayNumber: String { "#" + String(number) }
@@ -149,7 +152,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         if mergeable == "MERGEABLE", mergeState == "CLEAN",
            checks == .success || checks == .none,
            reviewDecision == nil || reviewDecision == "APPROVED" {
-            return .ready
+            // Merging a stacked PR also merges the open PRs below it, so they must be ready too.
+            return stack?.blocker == nil ? .ready : .waiting
         }
         return .waiting
     }
@@ -163,6 +167,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         if checks == .failure { return checks.title }
         if reviewDecision == "REVIEW_REQUIRED" { return "Waiting for approval" }
         if checks == .pending || checks == .unknown { return checks.title }
+        if let blocker = stack?.blocker { return "Waiting on \(blocker.displayNumber) below in the stack" }
         switch mergeState {
         case "BEHIND": return "Branch needs updating"
         case "BLOCKED": return "Blocked by repository rules"

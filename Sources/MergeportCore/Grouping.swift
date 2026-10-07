@@ -1,13 +1,14 @@
 import Foundation
 
 public enum PRGrouping: String, Codable, CaseIterable, Sendable {
-    case repository, branch, branchGroups, ticket, none
+    case repository, branch, branchGroups, ticket, stack, none
     public var title: String {
         switch self {
         case .repository: "Repository"
         case .branch: "Source branch"
         case .branchGroups: "Branch groups"
         case .ticket: "Ticket identifier"
+        case .stack: "Stack"
         case .none: "No grouping"
         }
     }
@@ -194,6 +195,16 @@ public struct GroupingPreferences: Codable, Equatable, Sendable {
                 let ticket = try ticketIdentifier(for: pr, matcher: matcher)
                 id = ticket.map { "ticket:\($0)" } ?? "ticket:unmatched"
                 title = ticket ?? "No ticket identifier"; subtitle = nil; symbol = "number"; unmatched = ticket == nil
+            case .stack:
+                if let stack = pr.stack {
+                    id = "stack:\(pr.repository.lowercased())#\(stack.number)"
+                    title = "Stack #\(stack.number)"
+                    subtitle = "\(pr.repository) · into \(stack.base)"
+                    unmatched = false
+                } else {
+                    id = "stack:none"; title = "Not stacked"; subtitle = nil; unmatched = true
+                }
+                symbol = "square.stack.3d.up"
             case .none:
                 id = "all"; title = ""; subtitle = nil; symbol = "tray"; unmatched = false
             }
@@ -203,7 +214,11 @@ public struct GroupingPreferences: Codable, Equatable, Sendable {
         // Groups surface recent activity first; cards inside a group read by repository and number.
         return groups.values.map {
             var group = $0
-            group.pullRequests.sort(by: PullRequest.overviewOrder)
+            if mode == .stack, !group.isUnmatched {
+                group.pullRequests.sort { ($0.stack?.position ?? 0) < ($1.stack?.position ?? 0) }
+            } else {
+                group.pullRequests.sort(by: PullRequest.overviewOrder)
+            }
             return group
         }.sorted {
             if $0.isUnmatched != $1.isUnmatched { return !$0.isUnmatched }

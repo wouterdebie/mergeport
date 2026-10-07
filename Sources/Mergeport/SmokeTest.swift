@@ -20,9 +20,9 @@ enum SmokeTest {
         throw MergeportError.message("The main window did not become visible.")
       }
       model.showOverview(scope: .mine)
-      guard model.filteredPRs.count == 6 else { throw MergeportError.message("My PR filter failed.") }
+      guard model.filteredPRs.count == 8 else { throw MergeportError.message("My PR filter failed.") }
       model.stageFilter = .ready
-      guard model.filteredPRs.count == 2 else { throw MergeportError.message("Ready filter failed.") }
+      guard model.filteredPRs.count == 3 else { throw MergeportError.message("Ready filter failed.") }
       model.showOverview(scope: .review)
       guard model.filteredPRs.count == 2 else {
         throw MergeportError.message("Review filter failed.")
@@ -142,8 +142,24 @@ enum SmokeTest {
         }
         for tab in model.tabs where !before.contains(tab.id) { model.closeTab(tab.id) }
         model.selectTab(nil)
+        guard let top = model.pullRequests.first(where: { $0.number == 457 }),
+          let stack = top.stack, stack.blocker?.number == 456, top.stage == .waiting,
+          stack.mergedTogether(with: 457) == [455, 456, 457],
+          let middle = stack.entries.first(where: { $0.number == 456 }),
+          model.pullRequest(for: middle, stackOf: top).author == "sam",
+          !model.relatedPRs(top).contains(where: { $0.stack != nil })
+        else {
+          throw MergeportError.message("The demo stack should wait on #456 and merge #455–#457 together.")
+        }
+        model.setGroupingMode(.stack)
+        guard case .success(let stackGroups) = model.groupingResult,
+          stackGroups.first(where: { $0.title == "Stack #7" })?.pullRequests.map(\.number) == [455, 457]
+        else {
+          throw MergeportError.message("Stack grouping did not order the stack's layers.")
+        }
+        model.setGroupingMode(.ticket)
         print(
-          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs and cross-repository ticket grouping."
+          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks and cross-repository ticket grouping."
         )
       }
       if let expected = args.firstIndex(of: "--expect-bundled-client-id") {

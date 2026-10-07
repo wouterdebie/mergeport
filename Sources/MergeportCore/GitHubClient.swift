@@ -244,6 +244,19 @@ public struct GitHubClient: Sendable {
     reviewThreads(first: 100) {
       pageInfo { hasNextPage endCursor } nodes { isResolved comments(first: 1) { nodes { author { login } } } }
     }
+    stackEntry { position }
+    stack {
+      number baseRefName size
+      entries(first: 50) {
+        nodes {
+          position
+          pullRequest {
+            id number title url state isDraft headRefName baseRefName reviewDecision mergeStateStatus
+            author { login }
+          }
+        }
+      }
+    }
     """
 }
 
@@ -356,6 +369,51 @@ private struct PRNode: Decodable {
   let reviewRequests: ReviewRequests
   let reviews: Reviews
   let reviewThreads: ThreadConnection
+  let stackEntry: StackPosition?
+  let stack: StackNode?
+
+  struct StackPosition: Decodable { let position: Int }
+  struct StackNode: Decodable {
+    struct Entries: Decodable {
+      struct Entry: Decodable {
+        struct Member: Decodable {
+          let id: String
+          let number: Int
+          let title: String
+          let url: URL
+          let state: String
+          let isDraft: Bool
+          let headRefName: String
+          let baseRefName: String
+          let reviewDecision: String?
+          let mergeStateStatus: String
+          let author: Actor?
+        }
+        let position: Int
+        let pullRequest: Member?
+      }
+      let nodes: [Entry?]
+    }
+    let number: Int
+    let baseRefName: String
+    let size: Int
+    let entries: Entries
+  }
+
+  var stackModel: PRStack? {
+    guard let stack, let position = stackEntry?.position else { return nil }
+    let entries = stack.entries.nodes.compactMap { $0 }.compactMap { entry -> PRStack.Entry? in
+      guard let pr = entry.pullRequest else { return nil }
+      return PRStack.Entry(
+        id: pr.id, position: entry.position, number: pr.number, title: pr.title, url: pr.url,
+        state: pr.state, isDraft: pr.isDraft, head: pr.headRefName, base: pr.baseRefName,
+        author: pr.author?.login ?? "ghost", reviewDecision: pr.reviewDecision,
+        mergeState: pr.mergeStateStatus)
+    }
+    return PRStack(
+      number: stack.number, base: stack.baseRefName, size: stack.size, position: position,
+      entries: entries)
+  }
 
   func model(viewer: String, unresolved: Int, copilotUnresolved: Int, requested: [String]) -> PullRequest {
     let latestCopilot = reviews.nodes.compactMap { $0 }.last {
@@ -380,7 +438,7 @@ private struct PRNode: Decodable {
       checks: CheckState(
         graphQL: commits.nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state),
       unresolvedThreads: unresolved, unresolvedCopilotThreads: copilotUnresolved, copilot: copilot, additions: additions, deletions: deletions,
-      authorAvatarURL: author?.avatarUrl
+      authorAvatarURL: author?.avatarUrl, stack: stackModel
     )
   }
 }
@@ -771,6 +829,34 @@ extension GitHubClient {
     }
   }
 
+  /// Stacked PRs must merge through GitHub's asynchronous merge, which also merges the open PRs below.
+  /// Polls until GitHub reports merged, enqueued or failed.
+  public func mergeAsync(
+    repository: String, number: Int, sha: String, method: MergeMethod,
+    pollInterval: Duration = .seconds(2), timeout: Duration = .seconds(300)
+  ) async throws -> AsyncMergeOutcome {
+    guard !sha.isEmpty else {
+      throw MergeportError.message("Load the PR's current commit before merging.")
+    }
+    let path = try prPath(repository, number) + "/merge-async"
+    let (data, status) = try await restResponse(
+      path, method: "PUT",
+      body: JSONEncoder().encode(["sha": sha, "merge_method": method.rawValue]))
+    guard [200, 202, 400, 409].contains(status) else { throw restProblem(status, data) }
+    var result = try JSONDecoder().decode(AsyncMergeResult.self, from: data)
+    let deadline = ContinuousClock.now + timeout
+    while result.status == "pending" {
+      guard let uuid = result.details?.uuid, uuid.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil
+      else { throw MergeportError.message("GitHub accepted the merge but returned no request ID.") }
+      guard ContinuousClock.now < deadline else {
+        throw MergeportError.message("GitHub is still merging in the background. Refresh in a moment to see the result.")
+      }
+      try await Task.sleep(for: pollInterval)
+      result = try await rest(path + "/" + uuid)
+    }
+    return try result.outcome()
+  }
+
   private func prPath(_ repository: String, _ number: Int) throws -> String {
     guard number > 0 else { throw MergeportError.message("Invalid PR number.") }
     return "/repos/\(try RepositoryName.validate(repository))/pulls/\(number)"
@@ -783,10 +869,9 @@ extension GitHubClient {
     return result.head.sha
   }
 
-  private func rest<T: Decodable & Sendable>(
-    _ path: String, method: String = "GET", body: Data? = nil
-  ) async throws
-    -> T
+  /// Raw response for endpoints whose non-2xx bodies carry results (async merge).
+  private func restResponse(_ path: String, method: String = "GET", body: Data? = nil) async throws
+    -> (Data, Int)
   {
     guard let url = URL(string: "https://api.github.com\(path)"), url.host == "api.github.com"
     else {
@@ -806,16 +891,26 @@ extension GitHubClient {
       throw MergeportError.message("GitHub returned an invalid response.")
     }
     if http.statusCode == 401 { throw MergeportError.unauthorized }
-    guard (200..<300).contains(http.statusCode) else {
-      let problem = try? JSONDecoder().decode(RESTProblem.self, from: data)
-      let hint =
-        http.statusCode >= 500
-        ? "GitHub had a server error; try again shortly."
-        : "Check repository permissions and SSO access."
-      throw MergeportError.message(
-        "GitHub (HTTP \(http.statusCode)): \(problem?.message ?? "Request failed"). \(hint)"
-      )
-    }
+    return (data, http.statusCode)
+  }
+
+  private func restProblem(_ status: Int, _ data: Data) -> MergeportError {
+    let problem = try? JSONDecoder().decode(RESTProblem.self, from: data)
+    let hint =
+      status >= 500
+      ? "GitHub had a server error; try again shortly."
+      : "Check repository permissions and SSO access."
+    return MergeportError.message(
+      "GitHub (HTTP \(status)): \(problem?.message ?? "Request failed"). \(hint)")
+  }
+
+  private func rest<T: Decodable & Sendable>(
+    _ path: String, method: String = "GET", body: Data? = nil
+  ) async throws
+    -> T
+  {
+    let (data, status) = try await restResponse(path, method: method, body: body)
+    guard (200..<300).contains(status) else { throw restProblem(status, data) }
     let decoder = JSONDecoder()
     decoder.keyDecodingStrategy = .convertFromSnakeCase
     decoder.dateDecodingStrategy = .iso8601
@@ -1317,5 +1412,25 @@ private struct RESTCommit: Decodable, Sendable {
     PullRequestCommit(
       id: sha, message: commit.message, author: author?.login ?? commit.author.name,
       date: commit.author.date, url: htmlUrl, verified: commit.verification?.verified)
+  }
+}
+
+struct AsyncMergeResult: Decodable, Sendable {
+  struct Details: Decodable, Sendable {
+    let uuid: String?
+    let message: String?
+  }
+  let status: String
+  let details: Details?
+
+  func outcome() throws -> AsyncMergeOutcome {
+    switch status {
+    case "merged": return .merged
+    case "enqueued": return .enqueued
+    case "failed":
+      throw MergeportError.message("GitHub did not merge the PR: \(details?.message ?? "the merge failed").")
+    default:
+      throw MergeportError.message("GitHub returned an unexpected merge status: \(status).")
+    }
   }
 }

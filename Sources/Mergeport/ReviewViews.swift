@@ -484,11 +484,16 @@ struct NativeReviewView: View {
   private func prSidebar(_ details: ReviewDetails) -> some View {
     VStack(alignment: .leading, spacing: 0) {
       let related = app.relatedPRs(review.pr)
-      if !related.isEmpty {
+      if !related.isEmpty || review.pr.stack != nil {
         sidebarSection("Related PRs") {
-          VStack(alignment: .leading, spacing: 2) {
-            ForEach(related) { pr in RelatedPRRow(pr: pr, current: review.pr) { app.open(pr) } }
-          }.padding(.horizontal, -6)
+          if let stack = review.pr.stack {
+            StackMap(pr: review.pr, stack: stack)
+          }
+          if !related.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+              ForEach(related) { pr in RelatedPRRow(pr: pr, current: review.pr) { app.open(pr) } }
+            }.padding(.horizontal, -6)
+          }
         }
       }
       sidebarSection(
@@ -873,6 +878,16 @@ struct NativeReviewView: View {
             ? "Merging can be performed automatically."
             : review.pr.mergeable == "CONFLICTING"
               ? "Resolve conflicts on GitHub or locally." : "GitHub is still computing mergeability.")
+        if let stack = review.pr.stack {
+          Divider()
+          mergeSection(
+            status: stack.blocker != nil ? .waiting : .success,
+            title: stack.blocker.map { "\($0.displayNumber) below isn't ready to merge" }
+              ?? (stack.openBelow.isEmpty
+                ? "Bottom of stack #\(stack.number)"
+                : "Merges \(PRStack.list(stack.mergedTogether(with: review.pr.number))) together"),
+            detail: "Layer \(stack.position) of \(stack.size) into \(stack.base). Merging also merges every open PR below; PRs above are retargeted to \(stack.base).")
+        }
         Divider()
         HStack(spacing: 12) {
           MergeButton(review: review, prominent: ready)
@@ -1797,13 +1812,27 @@ struct VerifiedBadge: View {
 struct MergeButton: View {
   @ObservedObject var review: ReviewModel
   var prominent = true
+  @State private var confirmStackMerge = false
+
+  private var mergeHelp: String {
+    let stack = review.pr.stack
+    let numbers = stack?.mergedTogether(with: review.pr.number) ?? [review.pr.number]
+    let target = stack?.base ?? review.pr.base
+    return numbers.count > 1
+      ? "\(review.mergeMethod.title) \(PRStack.list(numbers)) into \(target)"
+      : "\(review.mergeMethod.title) into \(target)"
+  }
 
   var body: some View {
     let methods = review.details?.mergeMethods ?? []
     let enabled = !review.isDemo && !review.isPerforming && review.details?.canMerge == true
     HStack(spacing: 0) {
       Button {
-        Task { await review.merge() }
+        if review.pr.stack?.blocker != nil {
+          confirmStackMerge = true
+        } else {
+          Task { await review.merge() }
+        }
       } label: {
         HStack(spacing: 6) {
           if review.isMerging {
@@ -1817,7 +1846,17 @@ struct MergeButton: View {
       }
       .buttonStyle(.plain)
       .disabled(!enabled)
-      .help("\(review.mergeMethod.title) into \(review.pr.base)")
+      .help(mergeHelp)
+      .confirmationDialog(
+        "Merge the stack below too?", isPresented: $confirmStackMerge
+      ) {
+        Button("\(review.mergeMethod.title) anyway") { Task { await review.merge() } }
+        Button("Cancel", role: .cancel) {}
+      } message: {
+        if let stack = review.pr.stack, let blocker = stack.blocker {
+          Text("Merging \(review.pr.displayNumber) also merges \(PRStack.list(stack.openBelow.map(\.number))). \(blocker.displayNumber) isn't approved or ready yet, so GitHub may reject the merge.")
+        }
+      }
       if methods.count > 1 {
         Rectangle().fill(Color.white.opacity(0.25)).frame(width: 1).padding(.vertical, 4)
         Menu {
@@ -2121,5 +2160,57 @@ struct RelatedPRRow: View {
     .buttonStyle(.plain)
     .onHover { hovering = $0 }
     .help("\(pr.displayTitle)\n\(pr.state == "OPEN" ? pr.stage.title : pr.state.capitalized) · into \(pr.base)")
+  }
+}
+
+/// GitHub's stack map: top layer first, the trunk at the bottom, the current PR highlighted.
+struct StackMap: View {
+  @EnvironmentObject var app: AppModel
+  let pr: PullRequest
+  let stack: PRStack
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      HStack(spacing: 5) {
+        Image(systemName: "square.stack.3d.up.fill")
+        Text("Stack #\(stack.number) · \(stack.size) PRs")
+      }
+      .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+      .padding(.horizontal, 6).padding(.bottom, 2)
+      ForEach(stack.entries.reversed()) { entry in
+        row(entry, member: app.pullRequest(for: entry, stackOf: pr))
+      }
+      HStack(spacing: 7) {
+        Image(systemName: "arrow.triangle.branch").foregroundStyle(.secondary).frame(width: 16)
+        Text(stack.base).font(.caption.monospaced().weight(.semibold)).foregroundStyle(Color.branchBlue)
+      }.padding(.horizontal, 6).padding(.vertical, 4)
+    }
+    .padding(.horizontal, -6)
+    .padding(.bottom, 4)
+  }
+
+  private func row(_ entry: PRStack.Entry, member: PullRequest) -> some View {
+    let current = entry.number == pr.number
+    let status = YardPalette.status(member)
+    return Button {
+      if !current { app.open(member) }
+    } label: {
+      HStack(spacing: 7) {
+        Text(String(entry.position)).font(.caption2.monospacedDigit().weight(.bold))
+          .foregroundStyle(current ? Color.white : .secondary)
+          .frame(width: 16, height: 16)
+          .background(current ? Color.accentColor : Color.primary.opacity(0.08), in: Circle())
+        Image(systemName: status.symbol).foregroundStyle(status.color)
+        Text(entry.displayNumber).monospacedDigit().foregroundStyle(.secondary)
+        Text(entry.title).lineLimit(1).truncationMode(.tail)
+          .fontWeight(current ? .semibold : .regular)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 6).padding(.vertical, 5)
+      .background(current ? Color.accentColor.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 6))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .help("\(entry.displayNumber) \(entry.title)\n\(entry.head) → \(entry.base) · \(member.state == "OPEN" ? member.waitingReason : member.state.capitalized)")
   }
 }

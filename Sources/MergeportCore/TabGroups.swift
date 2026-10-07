@@ -63,13 +63,14 @@ public enum TabGroups {
 
 /// What review tabs are grouped by. Each group shows its shared label once.
 public enum TabGrouping: String, CaseIterable, Codable, Sendable {
-  case related, ticket, branch, repository, none
+  case related, ticket, branch, stack, repository, none
 
   public var title: String {
     switch self {
-    case .related: "Ticket or source branch"
+    case .related: "Ticket, source branch or stack"
     case .ticket: "Ticket"
     case .branch: "Source branch"
+    case .stack: "Stack"
     case .repository: "Repository"
     case .none: "Don't group"
     }

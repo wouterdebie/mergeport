@@ -293,9 +293,25 @@ final class ReviewModel: ObservableObject {
         let method = mergeMethod
         isMerging = true
         defer { isMerging = false }
-        return await perform("PR merged", local: { $0.pr.state = "MERGED" }) { client in
-            try await client.merge(repository: self.reference.repository, number: self.reference.number, sha: details.headSHA, method: method)
+        guard let stack = details.pr.stack else {
+            return await perform("PR merged", local: { $0.pr.state = "MERGED" }) { client in
+                try await client.merge(repository: self.reference.repository, number: self.reference.number, sha: details.headSHA, method: method)
+            }
         }
+        // Stacked PRs merge asynchronously, together with every open PR below them.
+        let numbers = stack.mergedTogether(with: details.pr.number)
+        var outcome = AsyncMergeOutcome.merged
+        let merged = await perform(
+            numbers.count > 1 ? "Merged \(PRStack.list(numbers))" : "PR merged",
+            local: { if outcome == .merged { $0.pr.state = "MERGED" } }
+        ) { client in
+            outcome = try await client.mergeAsync(
+                repository: self.reference.repository, number: self.reference.number, sha: details.headSHA, method: method)
+        }
+        if merged, outcome == .enqueued {
+            notice = numbers.count > 1 ? "Added \(PRStack.list(numbers)) to the merge queue" : "Added to the merge queue"
+        }
+        return merged
     }
 
     /// Applies what GitHub just accepted to the local PR so the tab, card and page update instantly.
