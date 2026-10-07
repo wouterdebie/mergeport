@@ -460,7 +460,7 @@ struct MainWindow: View {
             HStack(spacing: 8) {
                 Circle().fill(model.isDemo ? Color.orange : model.isConnected ? .green : .secondary).frame(width: 7, height: 7)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.isDemo ? "Sample workspace" : model.login.isEmpty ? "Not connected" : "@\(model.login)")
+                    Text(model.isDemo ? "Sample workspace" : model.accountStatus)
                         .font(.caption.weight(.medium))
                     if model.isDemo {
                         Button("Connect GitHub") { model.showConnection = true }.font(.caption).buttonStyle(.link)

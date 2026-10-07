@@ -183,13 +183,17 @@ struct SettingsView: View {
         TabView(selection: $model.settingsTab) {
             Form {
                 Section("GitHub account") {
-                    LabeledContent("Account", value: model.login.isEmpty ? "Not connected" : "@\(model.login)")
+                    LabeledContent("Account", value: model.accountStatus)
                     if model.isConnected {
                         Button("Sign out…", role: .destructive) { confirmSignOut = true }
                             .disabled(model.isSigningOut || model.hasRunningMutations)
                     } else {
                         Button("Connect GitHub…") { showConnection = true }.disabled(model.isSigningOut)
                         if model.isDemo { Button("Leave sample workspace") { model.leavePreview() } }
+                    }
+                    if let error = model.error {
+                        Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                            .textSelection(.enabled)
                     }
                 }
                 Section("Linear") {
