@@ -1,0 +1,6 @@
+name: mergeport-app-lb-redirect
+defaultUrlRedirect:
+  hostRedirect: mergeport.app
+  httpsRedirect: true
+  redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
+  stripQuery: false

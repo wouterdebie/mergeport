@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1">
+      <stop stop-color="#0d1729"/>
+      <stop offset="1" stop-color="#211e3c"/>
+    </linearGradient>
+    <linearGradient id="accent">
+      <stop stop-color="#7de9e5"/>
+      <stop offset=".5" stop-color="#85b7ff"/>
+      <stop offset="1" stop-color="#bd98ff"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <path d="M0 625h1200" stroke="url(#accent)" stroke-width="10"/>
+  <circle cx="1080" cy="510" r="280" fill="#6477ec" opacity=".05"/>
+  <circle cx="1080" cy="510" r="200" fill="#6477ec" opacity=".05"/>
+  <image xlink:href="icon-256.png" x="876" y="164" width="236" height="236"/>
+  <g font-family="Helvetica, Arial, sans-serif">
+    <text x="82" y="110" font-size="28" fill="#d4e0f3" font-weight="700">Mergeport.</text>
+    <text x="78" y="249" font-size="72" fill="#f3f6ff" font-weight="700" letter-spacing="-3">Every pull request.</text>
+    <text x="78" y="335" font-size="72" fill="url(#accent)" font-weight="700" letter-spacing="-3">Safely in port.</text>
+    <text x="82" y="398" font-size="24" fill="#b8c7de">Your PRs and reviews across repositories, natively on your Mac.</text>
+    <rect x="82" y="449" width="394" height="47" rx="23" fill="#ffffff" opacity=".07"/>
+    <text x="103" y="480" font-size="20" fill="#99eeec" font-weight="700">100% free · Open source · MIT</text>
+    <text x="82" y="562" font-size="18" fill="#99aac4">macOS 14+ · Apple Silicon · Sign in with GitHub</text>
+    <text x="941" y="562" font-size="20" fill="#c6d2e7">mergeport.app</text>
+  </g>
+</svg>

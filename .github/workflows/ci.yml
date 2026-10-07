@@ -31,7 +31,7 @@ jobs:
         run: swift test --disable-automatic-resolution
       - name: Validate packaging scripts and plist
         run: |
-          bash -n scripts/bundle.sh scripts/sign.sh scripts/notarize.sh scripts/prepare-release.sh scripts/sign-release.sh scripts/generate-icon.sh Resources/dmg/create-template.sh Resources/dmg/test-packaging.sh scripts/make-dmg.sh scripts/check-dmg.sh
+          bash -n scripts/bundle.sh scripts/sign.sh scripts/notarize.sh scripts/prepare-release.sh scripts/sign-release.sh scripts/generate-icon.sh Resources/dmg/create-template.sh Resources/dmg/test-packaging.sh scripts/make-dmg.sh scripts/check-dmg.sh site/deploy.sh site/infra/provision.sh
           plutil -lint Resources/Info.plist
           xmllint --noout Resources/AppIcon.svg
       - name: Test Sparkle public-key preflight with disposable keys

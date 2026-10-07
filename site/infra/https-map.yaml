@@ -1,0 +1,12 @@
+name: mergeport-app-lb
+defaultService: https://www.googleapis.com/compute/v1/projects/wouterdebie-personal/global/backendBuckets/mergeport-app-bucket-backend
+hostRules:
+  - hosts:
+      - www.mergeport.app
+    pathMatcher: canonical
+pathMatchers:
+  - name: canonical
+    defaultUrlRedirect:
+      hostRedirect: mergeport.app
+      redirectResponseCode: MOVED_PERMANENTLY_DEFAULT
+      stripQuery: false

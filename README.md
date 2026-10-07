@@ -336,6 +336,12 @@ Required repository secrets (the same values as Don't Miss):
 The drag-to-Applications DMG is built from a prebuilt Finder layout in
 [Resources/dmg](Resources/dmg) (see its README for how to regenerate it).
 
+## Website
+
+[mergeport.app](https://mergeport.app) is a static page in [site/](site), served
+from Google Cloud Storage through a load balancer, like Don't Miss and Davit.
+See [site/README.md](site/README.md) to deploy or provision it.
+
 ## Validation and current boundaries
 
 One GitHub.com account is supported. Enterprise hosts, PR creation,
