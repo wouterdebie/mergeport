@@ -212,19 +212,8 @@ struct NativeReviewView: View {
 
   private func files(_ details: ReviewDetails) -> some View {
     HSplitView {
-      List(selection: $review.selectedFile) {
-        ForEach(details.files) { file in
-          VStack(alignment: .leading, spacing: 5) {
-            Text(file.filename).font(.caption.monospaced()).lineLimit(2)
-            HStack {
-              Text(file.status).foregroundStyle(.secondary)
-              Spacer()
-              Text("+\(file.additions)").foregroundStyle(.green)
-              Text("-\(file.deletions)").foregroundStyle(.red)
-            }.font(.caption2)
-          }.padding(.vertical, 4).tag(file.filename)
-        }
-      }.frame(minWidth: 210, idealWidth: 250, maxWidth: 360)
+      ChangedFilesTree(review: review, files: details.files)
+        .frame(minWidth: 210, idealWidth: 260, maxWidth: 420)
       VStack(alignment: .leading, spacing: 0) {
         if let file = review.file {
           VStack(alignment: .leading, spacing: 4) {
@@ -1972,5 +1961,120 @@ struct ReviewSectionTabs: View {
     if summary.failed > 0 { return .red }
     if summary.pending > 0 { return .yellow }
     return nil
+  }
+}
+
+/// GitHub-style changed-files tree: collapsible folders, indent guides and status icons.
+struct ChangedFilesTree: View {
+  @ObservedObject var review: ReviewModel
+  let files: [PullRequestFile]
+  @FocusState private var focused: Bool
+  private let indent: CGFloat = 16
+  private let rowHeight: CGFloat = 26
+
+  var body: some View {
+    let rows = FileTree.rows(for: files, collapsed: review.collapsedFolders)
+    ScrollViewReader { proxy in
+      ScrollView {
+        LazyVStack(alignment: .leading, spacing: 0) {
+          ForEach(rows) { row in
+            rowView(row).id(row.id)
+          }
+        }
+        .padding(.vertical, 6)
+      }
+      .background(Color(nsColor: .controlBackgroundColor))
+      .focusable()
+      .focusEffectDisabled()
+      .focused($focused)
+      .onKeyPress(.downArrow) { move(1, rows: rows, proxy: proxy) }
+      .onKeyPress(.upArrow) { move(-1, rows: rows, proxy: proxy) }
+    }
+  }
+
+  private func rowView(_ row: FileTreeRow) -> some View {
+    let selected = !row.isFolder && review.selectedFile == row.path
+    return HStack(spacing: 6) {
+      switch row.kind {
+      case .folder(let expanded):
+        Image(systemName: "chevron.right")
+          .font(.system(size: 10, weight: .semibold))
+          .foregroundStyle(.secondary)
+          .rotationEffect(.degrees(expanded ? 90 : 0))
+          .frame(width: 12)
+        Image(systemName: "folder.fill").foregroundStyle(.secondary)
+        Text(row.name).lineLimit(1).truncationMode(.middle)
+        Spacer(minLength: 0)
+      case .file(let file):
+        Color.clear.frame(width: 12)
+        statusIcon(file.status)
+        Text(row.name).lineLimit(1).truncationMode(.middle)
+        Spacer(minLength: 4)
+        if file.additions > 0 { Text("+\(file.additions)").foregroundStyle(.green) }
+        if file.deletions > 0 { Text("-\(file.deletions)").foregroundStyle(.red) }
+      }
+    }
+    .font(.system(size: 12.5))
+    .monospacedDigit()
+    .padding(.leading, 8 + CGFloat(row.depth) * indent)
+    .padding(.trailing, 10)
+    .frame(height: rowHeight)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(alignment: .leading) { guides(depth: row.depth) }
+    .background {
+      RoundedRectangle(cornerRadius: 6)
+        .fill(selected ? Color.accentColor.opacity(focused ? 0.35 : 0.2) : .clear)
+        .padding(.horizontal, 4)
+    }
+    .contentShape(Rectangle())
+    .onTapGesture {
+      focused = true
+      if row.isFolder {
+        withAnimation(.easeOut(duration: 0.12)) {
+          if review.collapsedFolders.contains(row.path) {
+            review.collapsedFolders.remove(row.path)
+          } else {
+            review.collapsedFolders.insert(row.path)
+          }
+        }
+      } else {
+        review.selectedFile = row.path
+      }
+    }
+    .help(row.path)
+  }
+
+  /// One vertical line per ancestor folder, aligned under its chevron.
+  private func guides(depth: Int) -> some View {
+    ZStack(alignment: .leading) {
+      ForEach(0..<depth, id: \.self) { level in
+        Rectangle()
+          .fill(Color.primary.opacity(0.12))
+          .frame(width: 1)
+          .offset(x: 8 + 6 + CGFloat(level) * indent)
+      }
+    }
+    .frame(maxHeight: .infinity)
+  }
+
+  private func statusIcon(_ status: String) -> some View {
+    let (symbol, color): (String, Color) =
+      switch status {
+      case "added": ("plus.square", .green)
+      case "removed": ("minus.square", .red)
+      case "renamed": ("arrow.right.square", .blue)
+      default: ("dot.square", .orange)
+      }
+    return Image(systemName: symbol).foregroundStyle(color).help(status.capitalized)
+  }
+
+  private func move(_ delta: Int, rows: [FileTreeRow], proxy: ScrollViewProxy) -> KeyPress.Result {
+    let paths = rows.filter { !$0.isFolder }.map(\.path)
+    guard !paths.isEmpty else { return .ignored }
+    let current = review.selectedFile.flatMap { paths.firstIndex(of: $0) } ?? (delta > 0 ? -1 : paths.count)
+    let next = paths[min(max(current + delta, 0), paths.count - 1)]
+    review.selectedFile = next
+    proxy.scrollTo("file:" + next)
+    return .handled
   }
 }

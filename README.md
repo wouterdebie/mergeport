@@ -61,7 +61,8 @@ indicator. Cached reviews are kept in memory for the current app session.
   outdated. Prominent Copilot badges distinguish reviewed, pending, outdated,
   no review and unknown states. Pending does not claim Copilot has started.
 - **Native reviews**: descriptions, discussion comments, submitted reviews,
-  threaded replies and resolve/reopen controls; changed-file navigation with
+  threaded replies and resolve/reopen controls; a collapsible changed-files
+  tree (single-child folders compressed, ↑/↓ to move between files) with
   full-panel-width unified diffs and old/new line numbers; changed characters
   within replacement lines get stronger red/green highlights; checks and
   commit history.
@@ -361,6 +362,7 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 
 `--expect-bundled-client-id CLIENT_ID` additionally verifies build configuration.
 `--smoke-grouping` checks conflict-branch aliases and cross-repo ticket groups.
+`--smoke-file-tree` checks the changed-files tree and leaves Files changed in the capture.
 `--smoke-shortcuts` checks every sidebar shortcut, tab numbers, ⌘K and that no two
 menu items share a key equivalent.
 `--smoke-linear` checks the Linear loopback callback (state validation) and

@@ -337,6 +337,29 @@ enum SmokeTest {
         }
         print("PASS: ⌘K palette, ⌘-letter sidebar shortcuts, ⌘0/⌘2…⌘9 tabs and no duplicate key equivalents.")
       }
+      if args.contains("--smoke-file-tree") {
+        guard let pr = model.pullRequests.first(where: { $0.reviewRequested }) else {
+          throw MergeportError.message("No review fixture.")
+        }
+        model.open(pr)
+        guard let tab = model.activeTab else { throw MergeportError.message("Review tab did not open.") }
+        let review = model.reviewModel(for: tab)
+        await review.load(force: true)
+        review.selectSection(.files)
+        let files = review.details?.files ?? []
+        let names = FileTree.rows(for: files).map(\.name)
+        guard names == ["services/routing", "src", "routing.ts", "tests", "routing.test.ts"],
+          review.selectedFile == "services/routing/src/routing.ts"
+        else { throw MergeportError.message("Changed files tree is wrong: \(names).") }
+        review.collapsedFolders = ["services/routing/tests"]
+        review.selectedFile = "services/routing/tests/routing.test.ts"
+        guard review.collapsedFolders.isEmpty else {
+          throw MergeportError.message("Selecting a file did not reveal it in the tree.")
+        }
+        review.selectedFile = "services/routing/src/routing.ts"
+        try await Task.sleep(for: .milliseconds(300))
+        print("PASS: Changed files render as a compressed, collapsible tree that reveals selected files.")
+      }
       guard let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
         NSImage(contentsOf: icon)?.isValid == true
       else {

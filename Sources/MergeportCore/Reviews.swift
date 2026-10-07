@@ -827,7 +827,7 @@ public enum DemoReview {
 
   public static func details(for pr: PullRequest) -> ReviewDetails {
     let file = PullRequestFile(
-      filename: "src/routing.ts", previousFilename: nil, status: "modified", additions: 3,
+      filename: "services/routing/src/routing.ts", previousFilename: nil, status: "modified", additions: 3,
       deletions: 2,
       patch: """
         @@ -1,3 +1,4 @@
@@ -839,7 +839,7 @@ public enum DemoReview {
          }
         """)
     let tests = PullRequestFile(
-      filename: "tests/routing.test.ts", previousFilename: nil, status: "added", additions: 3,
+      filename: "services/routing/tests/routing.test.ts", previousFilename: nil, status: "added", additions: 3,
       deletions: 0,
       patch: """
         @@ -0,0 +1,3 @@

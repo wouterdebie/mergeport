@@ -35,7 +35,13 @@ final class ReviewModel: ObservableObject {
     @Published var details: ReviewDetails?
     @Published var isComposingReview = false
     @Published var section: ReviewSection
-    @Published var selectedFile: String?
+    @Published var selectedFile: String? {
+        didSet {
+            // Jumping to a file (e.g. from a thread) reveals it in the tree.
+            if let selectedFile { collapsedFolders.subtract(FileTree.ancestors(of: selectedFile)) }
+        }
+    }
+    @Published var collapsedFolders: Set<String> = []
     @Published var isLoading = false
     @Published var isPerforming = false { didSet { app?.objectWillChange.send() } }
     @Published var error: String?
@@ -106,7 +112,7 @@ final class ReviewModel: ObservableObject {
             diffs = parsed
             details = fresh
             lastLoaded = .now
-            if !fresh.files.contains(where: { $0.filename == selectedFile }) { selectedFile = fresh.files.first?.filename }
+            if !fresh.files.contains(where: { $0.filename == selectedFile }) { selectedFile = FileTree.orderedFilenames(fresh.files).first }
             if !fresh.mergeMethods.contains(mergeMethod), let method = fresh.mergeMethods.first { mergeMethod = method }
             app.updateReviewTab(fresh.pr, tabID: reference.id)
             error = nil
