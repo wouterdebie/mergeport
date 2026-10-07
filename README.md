@@ -56,7 +56,9 @@ indicator. Cached reviews are kept in memory for the current app session.
 - **Linear**: connect Linear in Settings to show issue titles and workflow
   states for ticket identifiers in ticket groups and PR headers. The ticket chip
   on cards and PRs opens the Linear issue. Read-only OAuth (PKCE) access.
-- **Status**: latest-commit checks, GitHub review decision, unresolved threads
+- **Status**: latest-commit checks (a spinning pill while running, then passed
+  or failed; review tabs show counts and the overview polls every 30 seconds
+  while any checks run), GitHub review decision, unresolved threads
   and Copilot review/request status. Reviews on older commits are marked
   outdated. Prominent Copilot badges distinguish reviewed, pending, outdated,
   no review and unknown states. Pending does not claim Copilot has started.
@@ -252,7 +254,9 @@ replacement regions use bounded, coarser highlighting, noted in the diff view.
 
 Drafts stay Draft even if checks pass. Non-draft review requests stay Your review
 even with failing checks. Other PRs with requested changes, conflicts, failing
-checks or unresolved threads need attention.
+checks or unresolved threads need attention. Unresolved threads started by
+Copilot are shown as findings but don't block Ready to merge; if the repository
+requires resolved conversations, GitHub's own verdict still holds the PR back.
 
 Ready to merge requires GitHub's `CLEAN` policy verdict, known mergeability,
 passing/no checks and approved/not-required reviews. An approval alone is not

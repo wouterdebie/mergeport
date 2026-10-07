@@ -127,7 +127,8 @@ public struct GitHubClient: Sendable {
     struct ThreadResult: Decodable { let node: ThreadNode? }
     struct RequestNode: Decodable { let reviewRequests: PRNode.ReviewRequests }
     struct RequestResult: Decodable { let node: RequestNode? }
-    var unresolved = node.reviewThreads.nodes.compactMap { $0 }.filter { !$0.isResolved }.count
+    var unresolved = node.reviewThreads.unresolved.count
+    var copilotUnresolved = node.reviewThreads.unresolved.filter(\.isCopilot).count
     var cursor = try node.reviewThreads.pageInfo.nextCursor()
     while let after = cursor {
       let page: ThreadResult = try await query(
@@ -135,7 +136,7 @@ public struct GitHubClient: Sendable {
         query($id: ID!, $cursor: String!) {
           node(id: $id) { ... on PullRequest {
             reviewThreads(first: 100, after: $cursor) {
-              pageInfo { hasNextPage endCursor } nodes { isResolved }
+              pageInfo { hasNextPage endCursor } nodes { isResolved comments(first: 1) { nodes { author { login } } } }
             }
           } }
         }
@@ -144,7 +145,8 @@ public struct GitHubClient: Sendable {
         throw MergeportError.message(
           "A PR disappeared while loading its review threads. Refresh to try again.")
       }
-      unresolved += threads.nodes.compactMap { $0 }.filter { !$0.isResolved }.count
+      unresolved += threads.unresolved.count
+      copilotUnresolved += threads.unresolved.filter(\.isCopilot).count
       cursor = try threads.pageInfo.nextCursor()
     }
     var requested = node.reviewRequests.nodes.compactMap { $0?.requestedReviewer?.login }
@@ -168,7 +170,8 @@ public struct GitHubClient: Sendable {
       requested += requests.nodes.compactMap { $0?.requestedReviewer?.login }
       cursor = try requests.pageInfo.nextCursor()
     }
-    return node.model(viewer: viewer, unresolved: unresolved, requested: requested)
+    return node.model(
+      viewer: viewer, unresolved: unresolved, copilotUnresolved: copilotUnresolved, requested: requested)
   }
 
   private enum JSONValue: Encodable {
@@ -239,7 +242,7 @@ public struct GitHubClient: Sendable {
       nodes { author { login } state commit { oid } }
     }
     reviewThreads(first: 100) {
-      pageInfo { hasNextPage endCursor } nodes { isResolved }
+      pageInfo { hasNextPage endCursor } nodes { isResolved comments(first: 1) { nodes { author { login } } } }
     }
     """
 }
@@ -276,9 +279,24 @@ private struct PRConnection: Decodable {
 }
 
 private struct ThreadConnection: Decodable {
-  struct Thread: Decodable { let isResolved: Bool }
+  struct Thread: Decodable {
+    struct Comments: Decodable {
+      struct Comment: Decodable {
+        struct Author: Decodable { let login: String }
+        let author: Author?
+      }
+      let nodes: [Comment?]
+    }
+    let isResolved: Bool
+    let comments: Comments?
+    var isCopilot: Bool {
+      CopilotState.isCopilot(comments?.nodes.first??.author?.login ?? "")
+    }
+  }
   let pageInfo: PageInfo
   let nodes: [Thread?]
+
+  var unresolved: [Thread] { nodes.compactMap { $0 }.filter { !$0.isResolved } }
 }
 
 private struct PRNode: Decodable {
@@ -339,7 +357,7 @@ private struct PRNode: Decodable {
   let reviews: Reviews
   let reviewThreads: ThreadConnection
 
-  func model(viewer: String, unresolved: Int, requested: [String]) -> PullRequest {
+  func model(viewer: String, unresolved: Int, copilotUnresolved: Int, requested: [String]) -> PullRequest {
     let latestCopilot = reviews.nodes.compactMap { $0 }.last {
       CopilotState.isCopilot($0.author?.login ?? "") && $0.state != "PENDING"
         && $0.state != "DISMISSED"
@@ -361,7 +379,7 @@ private struct PRNode: Decodable {
       reviewDecision: reviewDecision, mergeable: mergeable, mergeState: mergeStateStatus,
       checks: CheckState(
         graphQL: commits.nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state),
-      unresolvedThreads: unresolved, copilot: copilot, additions: additions, deletions: deletions,
+      unresolvedThreads: unresolved, unresolvedCopilotThreads: copilotUnresolved, copilot: copilot, additions: additions, deletions: deletions,
       authorAvatarURL: author?.avatarUrl
     )
   }

@@ -191,6 +191,39 @@ struct GitHubClientTests {
     #expect(result.pullRequests.first?.stage == .attention)
   }
 
+  @Test func unresolvedCopilotFindingsDoNotBlockReadyToMerge() async throws {
+    func thread(_ login: String) -> [String: Any] {
+      ["isResolved": false, "comments": ["nodes": [["author": ["login": login]]]]]
+    }
+    let copilotOnly = fixture(
+      1,
+      overrides: [
+        "reviewThreads": [
+          "pageInfo": ["hasNextPage": false, "endCursor": NSNull()],
+          "nodes": [thread("copilot-pull-request-reviewer"), thread("Copilot")],
+        ]
+      ])
+    let human = fixture(
+      2,
+      overrides: [
+        "reviewThreads": [
+          "pageInfo": ["hasNextPage": false, "endCursor": NSNull()],
+          "nodes": [thread("copilot-pull-request-reviewer"), thread("alex")],
+        ]
+      ])
+    let http = session([try viewerReply(), try searchReply([copilotOnly, human]), try searchReply([])])
+    defer { http.invalidateAndCancel() }
+    let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
+      repositories: [])
+    let first = try #require(result.pullRequests.first { $0.number == 1 })
+    #expect(first.unresolvedThreads == 2 && first.copilotUnresolved == 2)
+    #expect(first.stage == .ready)
+    let second = try #require(result.pullRequests.first { $0.number == 2 })
+    #expect(second.blockingUnresolved == 1)
+    #expect(second.stage == .attention)
+    #expect(second.waitingReason == "1 unresolved review threads")
+  }
+
   @Test func copilotReviewMustMatchCurrentHeadCommit() async throws {
     let reviews: [String: Any] = [
       "pageInfo": ["hasPreviousPage": false],

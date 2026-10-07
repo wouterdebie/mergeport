@@ -174,6 +174,10 @@ struct NativeReviewView: View {
       .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
       .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.12)))
       .help("Lines added and removed")
+      Button { review.selectSection(.checks) } label: {
+        ChecksStatusBadge(state: review.pr.checks, summary: review.details?.checkSummary)
+      }
+      .buttonStyle(.plain)
       CopilotStatusBadge(state: review.pr.copilot)
       mergeStatusPill
     }.fixedSize()

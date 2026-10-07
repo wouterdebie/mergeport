@@ -58,6 +58,80 @@ struct StageBadge: View {
     }
 }
 
+/// Latest-commit checks: a spinner while running, then the last verdict. Pass `summary`
+/// when per-check results are loaded (review tabs) to show counts.
+struct ChecksStatusBadge: View {
+    let state: CheckState
+    var summary: CheckSummary?
+
+    private var effective: CheckState {
+        guard let summary, summary.total > 0 else { return state }
+        return summary.failed > 0 ? .failure : summary.pending > 0 ? .pending : .success
+    }
+
+    private var title: String {
+        switch effective {
+        case .pending:
+            if let summary, summary.total > 0 {
+                return "Checks running \(summary.total - summary.pending)/\(summary.total)"
+            }
+            return "Checks running"
+        case .success: return "Checks passed"
+        case .failure:
+            if let summary, summary.failed > 0 { return "\(summary.failed) check\(summary.failed == 1 ? "" : "s") failed" }
+            return "Checks failed"
+        case .none: return "No checks"
+        case .unknown: return "Checks unknown"
+        }
+    }
+
+    private var color: Color {
+        switch effective {
+        case .success: .green
+        case .failure: .red
+        case .pending: .yellow
+        case .none, .unknown: .secondary
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if effective == .pending {
+                RunningIndicator()
+            } else {
+                Image(systemName: effective == .success ? "checkmark.circle.fill"
+                    : effective == .failure ? "xmark.circle.fill" : "minus.circle")
+            }
+            Text(title)
+        }
+        .font(.system(size: 12, weight: .semibold))
+        .monospacedDigit()
+        .foregroundStyle(color)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.4)))
+        .fixedSize()
+        .help(summary.map { "\($0.title)\n\($0.detail)" } ?? state.title)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+    }
+}
+
+/// A continuously turning arc that, unlike a mini ProgressView, takes the surrounding color.
+private struct RunningIndicator: View {
+    @State private var turning = false
+
+    var body: some View {
+        Circle()
+            .trim(from: 0.15, to: 1)
+            .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
+            .frame(width: 11, height: 11)
+            .rotationEffect(.degrees(turning ? 360 : 0))
+            .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
+            .onAppear { turning = true }
+    }
+}
+
 struct CopilotStatusBadge: View {
     let state: CopilotState
 
@@ -314,7 +388,9 @@ struct MainWindow: View {
         .task(id: model.refreshInterval) {
             do {
                 while !Task.isCancelled {
-                    try await Task.sleep(for: .seconds(model.refreshInterval))
+                    // Running checks resolve in minutes; poll faster so their outcome shows up promptly.
+                    let running = model.pullRequests.contains { $0.state == "OPEN" && $0.checks == .pending }
+                    try await Task.sleep(for: .seconds(running ? min(model.refreshInterval, 30) : model.refreshInterval))
                     if scenePhase == .active { await model.refresh() }
                 }
             } catch is CancellationError {
@@ -679,11 +755,15 @@ private struct PRRow: View {
                     }
                 }
             HStack(spacing: 14) {
-                Label(pr.checks.title, systemImage: checkSymbol)
-                    .foregroundStyle(pr.checks == .failure ? Color.orange : pr.checks == .success ? .green : .secondary)
+                ChecksStatusBadge(state: pr.checks)
                 CopilotStatusBadge(state: pr.copilot)
-                if pr.unresolvedThreads > 0 {
-                    Label("\(pr.unresolvedThreads) unresolved", systemImage: "text.bubble").foregroundStyle(.orange)
+                if pr.blockingUnresolved > 0 {
+                    Label("\(pr.blockingUnresolved) unresolved", systemImage: "text.bubble").foregroundStyle(.orange)
+                }
+                if pr.copilotUnresolved > 0 {
+                    Label("\(pr.copilotUnresolved) Copilot finding\(pr.copilotUnresolved == 1 ? "" : "s")", systemImage: "sparkles")
+                        .foregroundStyle(.secondary)
+                        .help("Unresolved Copilot threads don't block merging")
                 }
                 Spacer(minLength: 4)
                 Text(pr.waitingReason).foregroundStyle(.secondary).lineLimit(1)
@@ -741,13 +821,4 @@ private struct PRRow: View {
 
     private var isDraft: Bool { pr.stage == .draft }
     private var tint: Color { YardPalette.tint(pr.stage) }
-
-    private var checkSymbol: String {
-        switch pr.checks {
-        case .success: "checkmark.circle"
-        case .failure: "xmark.circle"
-        case .pending: "clock"
-        case .none, .unknown: "minus.circle"
-        }
-    }
 }

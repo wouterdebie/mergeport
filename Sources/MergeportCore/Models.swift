@@ -88,6 +88,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public var mergeState: String
     public var checks: CheckState
     public var unresolvedThreads: Int
+    /// Unresolved threads started by Copilot; optional so older saved workspaces still decode.
+    public var unresolvedCopilotThreads: Int?
     public var copilot: CopilotState
     public var additions: Int
     public var deletions: Int
@@ -98,7 +100,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         author: String, head: String, headRepository: String? = nil, base: String,
         updatedAt: Date = .now, isDraft: Bool = false, state: String = "OPEN", reviewRequested: Bool = false,
         reviewDecision: String? = nil, mergeable: String = "UNKNOWN", mergeState: String = "UNKNOWN",
-        checks: CheckState = .unknown, unresolvedThreads: Int = 0,
+        checks: CheckState = .unknown, unresolvedThreads: Int = 0, unresolvedCopilotThreads: Int = 0,
         copilot: CopilotState = .notRequested, additions: Int = 0, deletions: Int = 0,
         authorAvatarURL: URL? = nil
     ) {
@@ -120,6 +122,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         self.mergeState = mergeState
         self.checks = checks
         self.unresolvedThreads = unresolvedThreads
+        self.unresolvedCopilotThreads = unresolvedCopilotThreads
         self.copilot = copilot
         self.additions = additions
         self.deletions = deletions
@@ -132,12 +135,16 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     /// Requested from you and not yet approved; approved PRs don't need another look.
     public var needsMyReview: Bool { reviewRequested && reviewDecision != "APPROVED" }
 
+    public var copilotUnresolved: Int { min(unresolvedCopilotThreads ?? 0, unresolvedThreads) }
+    /// Copilot findings are suggestions: they're shown, but don't hold a PR back from merging.
+    public var blockingUnresolved: Int { unresolvedThreads - copilotUnresolved }
+
     public var stage: WorkflowStage {
         if state != "OPEN" { return .waiting }
         if isDraft { return .draft }
         if needsMyReview { return .review }
         if checks == .failure || reviewDecision == "CHANGES_REQUESTED"
-            || mergeable == "CONFLICTING" || unresolvedThreads > 0 { return .attention }
+            || mergeable == "CONFLICTING" || blockingUnresolved > 0 { return .attention }
         // CLEAN is GitHub's aggregate policy verdict, not an inference from approval alone.
         if mergeable == "MERGEABLE", mergeState == "CLEAN",
            checks == .success || checks == .none,
@@ -152,7 +159,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         if needsMyReview { return "Your review is requested" }
         if mergeable == "CONFLICTING" { return "Merge conflicts" }
         if reviewDecision == "CHANGES_REQUESTED" { return "Changes requested" }
-        if unresolvedThreads > 0 { return "\(unresolvedThreads) unresolved review threads" }
+        if blockingUnresolved > 0 { return "\(blockingUnresolved) unresolved review threads" }
         if checks == .failure { return checks.title }
         if reviewDecision == "REVIEW_REQUIRED" { return "Waiting for approval" }
         if checks == .pending || checks == .unknown { return checks.title }
