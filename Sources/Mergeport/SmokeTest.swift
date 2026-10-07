@@ -241,15 +241,24 @@ enum SmokeTest {
           throw MergeportError.message(
             "Expanding HTML details did not resize its native comment card.")
         }
-        guard let scrollingBody = body as? ConversationWebView,
-          let scrollView = body.enclosingScrollView,
+        guard body is ConversationWebView, let scrollView = body.enclosingScrollView,
           let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
                               wheel1: -150, wheel2: 0, wheel3: 0),
-          let event = NSEvent(cgEvent: wheel) else {
+          let event = NSEvent(cgEvent: wheel),
+          let sideways = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                 wheel1: 0, wheel2: -150, wheel3: 0).flatMap(NSEvent.init(cgEvent:))
+        else {
           throw MergeportError.message("Cannot exercise conversation scrolling over an HTML body.")
         }
+        // Vertical gestures skip the body so AppKit hands them, momentum included, to the
+        // timeline's own scroll view; horizontal ones still reach wide tables and code.
+        guard ConversationWebView.leavesToConversation(event),
+          !ConversationWebView.leavesToConversation(sideways)
+        else {
+          throw MergeportError.message("HTML bodies capture vertical scrolling or drop horizontal scrolling.")
+        }
         let previousOffset = scrollView.contentView.bounds.origin.y
-        scrollingBody.scrollWheel(with: event)
+        scrollView.scrollWheel(with: event)
         try await Task.sleep(for: .milliseconds(300))
         guard scrollView.contentView.bounds.origin.y > previousOffset else {
           throw MergeportError.message("Scrolling over an HTML body did not move the conversation timeline.")

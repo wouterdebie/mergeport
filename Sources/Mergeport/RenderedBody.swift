@@ -1,38 +1,18 @@
 import SwiftUI
 import WebKit
 
+/// Comment bodies size themselves to their content, so vertical scrolling belongs to the
+/// conversation. Opting out of hit-testing for those events lets AppKit route the whole
+/// gesture, including trackpad momentum, to the enclosing scroll view natively. Horizontal
+/// scrolls still reach the page for wide tables and code blocks.
 final class ConversationWebView: WKWebView {
-  private var scrollMonitor: Any?
-
-  override func viewDidMoveToWindow() {
-    super.viewDidMoveToWindow()
-    stopMonitoringScroll()
-    guard window != nil else { return }
-    scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-      guard let self, let window = self.window, event.window === window,
-        self.bounds.contains(self.convert(event.locationInWindow, from: nil)),
-        abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-        let scrollView = self.enclosingScrollView
-      else { return event }
-      scrollView.scrollWheel(with: event)
-      return nil
-    }
+  override func hitTest(_ point: NSPoint) -> NSView? {
+    if let event = NSApp.currentEvent, Self.leavesToConversation(event) { return nil }
+    return super.hitTest(point)
   }
 
-  override func scrollWheel(with event: NSEvent) {
-    if abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
-      let scrollView = enclosingScrollView {
-      scrollView.scrollWheel(with: event)
-    } else {
-      super.scrollWheel(with: event)
-    }
-  }
-
-  func stopMonitoringScroll() {
-    if let scrollMonitor {
-      NSEvent.removeMonitor(scrollMonitor)
-      self.scrollMonitor = nil
-    }
+  static func leavesToConversation(_ event: NSEvent) -> Bool {
+    event.type == .scrollWheel && abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
   }
 }
 
@@ -116,7 +96,6 @@ private struct HTMLBody: NSViewRepresentable {
   }
 
   static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
-    (view as? ConversationWebView)?.stopMonitoringScroll()
     view.configuration.userContentController.removeScriptMessageHandler(forName: "bodyHeight")
     view.navigationDelegate = nil
   }
