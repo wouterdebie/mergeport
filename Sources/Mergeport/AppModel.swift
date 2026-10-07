@@ -213,8 +213,8 @@ final class AppModel: ObservableObject {
         do {
             let client = GitHubClient(token: token, session: networkSession)
             let previousLogin = snapshot?.viewer.login
-            let result = try await client.snapshot(repositories: followed) { partial in
-                await self.showListedInbox(partial, generation: currentGeneration, followed: followed)
+            let result = try await client.snapshot(repositories: followed) { partial, loaded in
+                await self.showListedInbox(partial, loaded: loaded, generation: currentGeneration, followed: followed)
             }
             var tabUpdates: [String: PullRequest] = [:]
             for tab in tabs {
@@ -261,9 +261,21 @@ final class AppModel: ObservableObject {
     }
 
     /// The list is available before mergeability is loaded. Show it immediately so a slow check does not look like an empty inbox.
-    private func showListedInbox(_ result: InboxSnapshot, generation current: UUID, followed: [String]) {
+    /// PRs still loading keep their previous details, so a background refresh doesn't flash every status to unknown.
+    private func showListedInbox(
+        _ result: InboxSnapshot, loaded: Set<String>, generation current: UUID, followed: [String]
+    ) {
         guard generation == current, followed == repositories else { return }
-        snapshot = result
+        var listed = result
+        if let previous = snapshot, previous.viewer.login == result.viewer.login {
+            let known = Dictionary(previous.pullRequests.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            listed.pullRequests = result.pullRequests.map { pr in
+                guard !loaded.contains(pr.id), var kept = known[pr.id] else { return pr }
+                kept.reviewRequested = pr.reviewRequested
+                return kept
+            }
+        }
+        snapshot = listed
         error = nil
     }
 

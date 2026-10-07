@@ -17,7 +17,7 @@ public struct GitHubClient: Sendable {
 
   public func snapshot(
     repositories: [String],
-    onListed: (@Sendable (InboxSnapshot) async -> Void)? = nil
+    onListed: (@Sendable (InboxSnapshot, _ loaded: Set<String>) async -> Void)? = nil
   ) async throws -> InboxSnapshot {
     let viewer = try await viewer()
     var nodes: [String: PRNode] = [:]
@@ -40,19 +40,39 @@ public struct GitHubClient: Sendable {
     let followed = Set(repositories.map { $0.lowercased() })
     var hydrated: [String: PullRequest] = [:]
     if let onListed {
-      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)))
+      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)), [])
     }
     let priority = nodes.values.filter {
       requestedIDs.contains($0.id) || followed.contains($0.repository.nameWithOwner.lowercased())
     }
-    for node in priority { hydrated[node.id] = try await hydrate(node, viewer: viewer.login) }
+    hydrated = try await hydrateAll(priority, viewer: viewer.login)
     if let onListed, !priority.isEmpty {
-      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)))
+      await onListed(
+        InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)),
+        Set(hydrated.keys))
     }
-    for node in nodes.values where hydrated[node.id] == nil {
-      hydrated[node.id] = try await hydrate(node, viewer: viewer.login)
-    }
+    let rest = nodes.values.filter { hydrated[$0.id] == nil }
+    hydrated.merge(try await hydrateAll(rest, viewer: viewer.login)) { $1 }
     return InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated))
+  }
+
+  /// One PR at a time per request keeps GitHub's gateway happy; a few in flight keeps large inboxes fast.
+  private func hydrateAll(_ nodes: [PRNode], viewer: String, width: Int = 4) async throws
+    -> [String: PullRequest]
+  {
+    try await withThrowingTaskGroup(of: PullRequest.self) { group in
+      var pending = nodes.makeIterator()
+      for _ in 0..<width {
+        guard let node = pending.next() else { break }
+        group.addTask { try await hydrate(node, viewer: viewer) }
+      }
+      var result: [String: PullRequest] = [:]
+      while let pr = try await group.next() {
+        result[pr.id] = pr
+        if let node = pending.next() { group.addTask { try await hydrate(node, viewer: viewer) } }
+      }
+      return result
+    }
   }
 
   public func pullRequest(repository: String, number: Int, viewer: String) async throws

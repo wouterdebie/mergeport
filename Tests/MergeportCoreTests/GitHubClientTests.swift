@@ -180,6 +180,7 @@ struct GitHubClientTests {
     let http = session([
       try viewerReply(),
       try searchReply([slim]),
+      try searchReply([]),
       try Reply([
         "data": [
           "node": [
@@ -189,7 +190,6 @@ struct GitHubClientTests {
           ]
         ]
       ]),
-      try searchReply([]),
     ])
     defer { http.invalidateAndCancel() }
     let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(repositories: [])
@@ -205,6 +205,45 @@ struct GitHubClientTests {
     #expect(!bodies[1].contains("mergeable"))
   }
 
+  @Test func inboxConnectionsLoadConcurrentlyAndMatchTheirPullRequest() async throws {
+    let numbers = Array(1...9)
+    let slim = numbers.map { number -> [String: Any] in
+      var node = fixture(number)
+      for key in ["reviewRequests", "reviews", "reviewThreads", "mergeable", "mergeStateStatus"] {
+        node.removeValue(forKey: key)
+      }
+      return node
+    }
+    let mine = try searchReply(slim, total: slim.count)
+    let empty = try searchReply([])
+    let http = session([])
+    defer { http.invalidateAndCancel() }
+    let searches = SearchCounter()
+    StubProtocol.state.route { request in
+      let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+      if body.contains("viewer { login }") { return try Reply(["data": ["viewer": ["login": "you"]]]) }
+      if body.contains("search(") { return searches.next() == 0 ? mine : empty }
+      let number = numbers.first { body.contains("\"PR_\($0)\"") } ?? 0
+      let full = fixture(number)
+      return try Reply([
+        "data": [
+          "node": [
+            "reviewRequests": full["reviewRequests"]!, "reviews": full["reviews"]!,
+            "reviewThreads": full["reviewThreads"]!,
+            "mergeable": number.isMultiple(of: 2) ? "CONFLICTING" : "MERGEABLE",
+            "mergeStateStatus": number.isMultiple(of: 2) ? "DIRTY" : "CLEAN",
+          ]
+        ]
+      ])
+    }
+    let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
+      repositories: [])
+    #expect(result.pullRequests.count == numbers.count)
+    for pr in result.pullRequests {
+      #expect(pr.mergeable == (pr.number.isMultiple(of: 2) ? "CONFLICTING" : "MERGEABLE"))
+    }
+  }
+
   @Test func reviewThreadsArePaginatedBeforeClassifyingReadiness() async throws {
     let first = fixture(
       1,
@@ -216,6 +255,7 @@ struct GitHubClientTests {
       ])
     let http = session([
       try viewerReply(), try searchReply([first]),
+      try searchReply([]),
       try Reply([
         "data": [
           "node": [
@@ -226,7 +266,6 @@ struct GitHubClientTests {
           ]
         ]
       ]),
-      try searchReply([]),
     ])
     defer { http.invalidateAndCancel() }
     let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
@@ -298,6 +337,7 @@ struct GitHubClientTests {
       ])
     let http = session([
       try viewerReply(), try searchReply([first]),
+      try searchReply([]),
       try Reply([
         "data": [
           "node": [
@@ -308,7 +348,6 @@ struct GitHubClientTests {
           ]
         ]
       ]),
-      try searchReply([]),
     ])
     defer { http.invalidateAndCancel() }
     let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
@@ -784,5 +823,16 @@ extension GitHubClientTests {
   @Test func linearUnauthorizedIsReported() async throws {
     let client = LinearClient(token: "expired", session: session([try Reply([:], status: 401)]))
     await #expect(throws: LinearError.self) { _ = try await client.issues(["CON-1"]) }
+  }
+}
+
+private final class SearchCounter: @unchecked Sendable {
+  private let lock = NSLock()
+  private var count = 0
+  func next() -> Int {
+    lock.lock()
+    defer { lock.unlock() }
+    defer { count += 1 }
+    return count
   }
 }
