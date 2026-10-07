@@ -122,8 +122,15 @@ enum SmokeTest {
           throw MergeportError.message(
             "Ticket grouping lost PRs or failed to group across repositories.")
         }
+        guard let staging451 = model.pullRequests.first(where: { $0.number == 451 }),
+          model.relatedPRs(staging451).map(\.number) == [452],
+          let routing = model.pullRequests.first(where: { $0.number == 440 }),
+          model.relatedPRs(routing).map(\.number) == [87]
+        else {
+          throw MergeportError.message("Related PRs should come from the source branch and the Linear ticket.")
+        }
         print(
-          "PASS: reusable branch rules, explicit aliases, sibling links and cross-repository ticket grouping."
+          "PASS: reusable branch rules, explicit aliases, sibling links, related PRs and cross-repository ticket grouping."
         )
       }
       if let expected = args.firstIndex(of: "--expect-bundled-client-id") {

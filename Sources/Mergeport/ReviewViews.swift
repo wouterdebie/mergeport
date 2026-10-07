@@ -483,6 +483,14 @@ struct NativeReviewView: View {
 
   private func prSidebar(_ details: ReviewDetails) -> some View {
     VStack(alignment: .leading, spacing: 0) {
+      let related = app.relatedPRs(review.pr)
+      if !related.isEmpty {
+        sidebarSection("Related PRs") {
+          VStack(alignment: .leading, spacing: 2) {
+            ForEach(related) { pr in RelatedPRRow(pr: pr, current: review.pr) { app.open(pr) } }
+          }.padding(.horizontal, -6)
+        }
+      }
       sidebarSection(
         "Reviewers", accessory: canRequestReviews(details) ? pickerButton(.reviewers, details) : nil
       ) {
@@ -2080,5 +2088,38 @@ struct ChangedFilesTree: View {
     review.selectedFile = next
     proxy.scrollTo("file:" + next)
     return .handled
+  }
+}
+
+/// One line per related PR, like Linear's linked-diff list: stage icon, target branch, title.
+struct RelatedPRRow: View {
+  let pr: PullRequest
+  let current: PullRequest
+  let open: () -> Void
+  @State private var hovering = false
+
+  var body: some View {
+    let status = YardPalette.status(pr)
+    Button(action: open) {
+      HStack(spacing: 7) {
+        Image(systemName: status.symbol).foregroundStyle(status.color).frame(width: 16)
+        Text(pr.base).font(.caption.monospaced().weight(.semibold))
+          .foregroundStyle(Color.branchBlue)
+          .padding(.horizontal, 5).padding(.vertical, 1)
+          .background(Color.branchBlue.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+        if pr.repository != current.repository {
+          Text(pr.repository.split(separator: "/").last.map(String.init) ?? pr.repository)
+            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
+        Text(pr.title).lineLimit(1).truncationMode(.tail)
+        Spacer(minLength: 0)
+      }
+      .padding(.horizontal, 6).padding(.vertical, 5)
+      .background(Color.primary.opacity(hovering ? 0.07 : 0), in: RoundedRectangle(cornerRadius: 6))
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .onHover { hovering = $0 }
+    .help("\(pr.displayTitle)\n\(pr.state == "OPEN" ? pr.stage.title : pr.state.capitalized) · into \(pr.base)")
   }
 }

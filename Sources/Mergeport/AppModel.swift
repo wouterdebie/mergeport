@@ -502,6 +502,21 @@ final class AppModel: ObservableObject {
         }.sorted { $0.base < $1.base }
     }
 
+    /// PRs worth jumping to from a review: the same branch into other bases (staging/main),
+    /// then anything sharing its ticket, in any followed repository.
+    func relatedPRs(_ pr: PullRequest) -> [PullRequest] {
+        let branch = siblings(pr)
+        let ticket = ticket(for: pr)
+        let sameTicket = ticket.map { ticket in
+            pullRequests.filter { other in
+                !(other.repository == pr.repository && other.number == pr.number)
+                    && !branch.contains { $0.id == other.id }
+                    && self.ticket(for: other) == ticket
+            }.sorted(by: PullRequest.overviewOrder)
+        } ?? []
+        return branch + sameTicket
+    }
+
     func canonicalBranch(_ pr: PullRequest) -> String {
         let branch = canonicalBranches[BranchIdentity(pr)] ?? pr.head
         return groupingPreferences.mode == .branchGroups ? groupingPreferences.normalizedBranch(branch) : branch

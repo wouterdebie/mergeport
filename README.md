@@ -48,6 +48,8 @@ indicator. Cached reviews are kept in memory for the current app session.
   repository are linked; different forks are not conflated. Explicit branch
   aliases let conflict branches such as `feature/foo-staging` join the same
   family as `feature/foo`.
+- **Related PRs**: the review sidebar lists PRs from the same source branch
+  and PRs for the same Linear ticket (across repositories); click one to open it.
 - **Grouping**: repository, source branch, reusable branch groups, ticket
   identifier, or an ungrouped list. Configurable suffix rules group ephemeral
   `<branch>`, `<branch>-staging` and `<branch>-test` branches without creating
