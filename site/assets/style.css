@@ -98,7 +98,7 @@ figcaption { font-size: 10px; text-align: center; margin-top: 13px; color: var(-
 .feature-symbol { display: inline-flex; justify-content: center; align-items: center; color: var(--cyan); background: var(--surface-soft); width: 37px; height: 37px; border: 1px solid var(--border); border-radius: 10px; font-size: 24px; }
 .feature-card h3 { margin-top: 17px; margin-bottom: 9px; font-size: 19px; line-height: 1.3; letter-spacing: -.5px; }
 .feature-card p { color: var(--muted); font-size: 13px; line-height: 1.85; }
-.spotlight, .family-card { grid-column: span 3; }
+.spotlight, .family-card, .wide-card { grid-column: span 3; }
 .small-card { grid-column: span 2; padding: 26px; }
 .small-card h3 { font-size: 17px; }
 .setup-section { border-block: 1px solid var(--border); background: var(--surface); }
@@ -177,6 +177,7 @@ footer nav a { font-size: 11px; }
 .state.merged { color: var(--purple); background: color-mix(in srgb, var(--purple) 12%, transparent); }
 .state.waiting { color: #b7791f; background: #d2992220; }
 .state.draft { color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
+.state.ready { color: #1f883d; background: #1f883d1f; }
 .example-label { display: block; font-size: 8px; text-align: right; color: var(--muted); margin-top: 8px; }
 @media (max-width: 1050px) {
   .app-preview { grid-template-columns: 124px minmax(0, 1fr); }
