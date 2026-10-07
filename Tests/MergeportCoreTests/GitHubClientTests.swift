@@ -159,6 +159,50 @@ struct GitHubClientTests {
       })
     let secondPage = try JSONSerialization.jsonObject(with: requests[2].httpBody!) as! [String: Any]
     #expect((secondPage["variables"] as? [String: Any])?["cursor"] as? String == "mine-page-2")
+    let searchQuery = String(data: requests[1].httpBody ?? Data(), encoding: .utf8) ?? ""
+    #expect(!searchQuery.contains("reviewThreads"))
+    #expect(!searchQuery.contains("mergeable"))
+  }
+
+  @Test func inboxListLoadsReviewConnectionsOnePullRequestAtATime() async throws {
+    var slim = fixture(7)
+    slim.removeValue(forKey: "reviewRequests")
+    slim.removeValue(forKey: "reviews")
+    slim.removeValue(forKey: "reviewThreads")
+    let full = fixture(
+      7,
+      overrides: [
+        "reviewRequests": [
+          "pageInfo": ["hasNextPage": false, "endCursor": NSNull()],
+          "nodes": [["requestedReviewer": ["login": "you"]]],
+        ]
+      ])
+    let http = session([
+      try viewerReply(),
+      try searchReply([slim]),
+      try Reply([
+        "data": [
+          "node": [
+            "reviewRequests": full["reviewRequests"]!,
+            "reviews": full["reviews"]!,
+            "reviewThreads": full["reviewThreads"]!,
+          ]
+        ]
+      ]),
+      try searchReply([]),
+    ])
+    defer { http.invalidateAndCancel() }
+    let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(repositories: [])
+    let pr = try #require(result.pullRequests.first)
+    #expect(pr.number == 7)
+    #expect(pr.reviewRequested)
+    let requests = StubProtocol.state.requests
+    #expect(requests.count == 4)
+    let bodies = requests.map { String(data: $0.httpBody ?? Data(), encoding: .utf8) ?? "" }
+    let followUp = bodies.first { $0.contains("PR_7") } ?? ""
+    #expect(followUp.contains("reviewThreads"))
+    #expect(followUp.contains("mergeable"))
+    #expect(!bodies[1].contains("mergeable"))
   }
 
   @Test func reviewThreadsArePaginatedBeforeClassifyingReadiness() async throws {
@@ -324,6 +368,40 @@ struct GitHubClientTests {
     await #expect(throws: MergeportError.self) {
       try await GitHubClient(token: "fixture-token", session: http).viewer()
     }
+    #expect(StubProtocol.state.requests.count == 1)
+  }
+
+  @Test func readRequestsRetryGatewayErrors() async throws {
+    let http = session([
+      try Reply(["message": "bad gateway"], status: 502),
+      try viewerReply(),
+    ])
+    defer { http.invalidateAndCancel() }
+    let viewer = try await GitHubClient(token: "fixture-token", session: http).viewer()
+    #expect(viewer.login == "you")
+    #expect(StubProtocol.state.requests.count == 2)
+  }
+
+  @Test func gatewayErrorsStopAfterThreeReads() async throws {
+    let http = session([
+      try Reply(["message": "bad gateway"], status: 502),
+      try Reply(["message": "bad gateway"], status: 503),
+      try Reply(["message": "bad gateway"], status: 504),
+    ])
+    defer { http.invalidateAndCancel() }
+    await #expect(throws: MergeportError.self) {
+      try await GitHubClient(token: "fixture-token", session: http).viewer()
+    }
+    #expect(StubProtocol.state.requests.count == 3)
+  }
+
+  @Test func mutationsDoNotRetryGatewayErrors() async throws {
+    let http = session([try Reply(["message": "bad gateway"], status: 502)])
+    defer { http.invalidateAndCancel() }
+    await #expect(throws: MergeportError.self) {
+      try await GitHubClient(token: "fixture-token", session: http).setThreadResolved("T", resolved: true)
+    }
+    #expect(StubProtocol.state.requests.count == 1)
   }
 
   @Test func deviceCodeUsesPublicClientIDAndValidatesAuthorizationURL() async throws {

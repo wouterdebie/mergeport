@@ -146,6 +146,12 @@ final class AppModel: ObservableObject {
     }
 
     var login: String { snapshot?.viewer.login ?? "" }
+    /// Token saved, inbox not loaded yet. Settings must not call that "Not connected" while offering Sign out.
+    var accountStatus: String {
+        if !login.isEmpty { return "@\(login)" }
+        if isConnected { return "Signed in" }
+        return "Not connected"
+    }
     var pullRequests: [PullRequest] { snapshot?.pullRequests ?? [] }
     var knownRepositories: [String] { Set(repositories + pullRequests.map(\.repository)).sorted() }
     var activeTab: ReviewTab? { tabs.first { $0.id == selectedTab } }
@@ -170,7 +176,23 @@ final class AppModel: ObservableObject {
         started = true
         refreshActiveReview()
         preloadReviews()
-        if isConnected { await refresh() }
+        if isConnected {
+            if login.isEmpty { await rememberViewer() }
+            await refresh()
+        }
+    }
+
+    /// The OAuth token can be saved before any inbox snapshot exists. Keep the login so Settings stays consistent if the inbox fetch fails.
+    private func rememberViewer() async {
+        guard let token else { return }
+        do {
+            let viewer = try await GitHubClient(token: token, session: networkSession).viewer()
+            guard snapshot?.viewer.login != viewer.login else { return }
+            snapshot = InboxSnapshot(viewer: viewer, pullRequests: [])
+            persistWorkspace()
+        } catch {
+            report(error)
+        }
     }
 
     func refresh() async {
@@ -190,7 +212,10 @@ final class AppModel: ObservableObject {
         }
         do {
             let client = GitHubClient(token: token, session: networkSession)
-            let result = try await client.snapshot(repositories: followed)
+            let previousLogin = snapshot?.viewer.login
+            let result = try await client.snapshot(repositories: followed) { partial in
+                await self.showListedInbox(partial, generation: currentGeneration, followed: followed)
+            }
             var tabUpdates: [String: PullRequest] = [:]
             for tab in tabs {
                 let fresh: PullRequest
@@ -203,7 +228,7 @@ final class AppModel: ObservableObject {
             try Task.checkCancellation()
             guard generation == currentGeneration else { return }
             if followed != repositories { pendingRefresh = true; return }
-            if let previous = snapshot, previous.viewer.login != result.viewer.login {
+            if let previousLogin, previousLogin != result.viewer.login {
                 tabs = []
                 selectedTab = nil
                 reviewModels.removeAll()
@@ -235,6 +260,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The list is available before mergeability is loaded. Show it immediately so a slow check does not look like an empty inbox.
+    private func showListedInbox(_ result: InboxSnapshot, generation current: UUID, followed: [String]) {
+        guard generation == current, followed == repositories else { return }
+        snapshot = result
+        error = nil
+    }
+
     func signIn() {
         guard !isSigningIn, !isSigningOut else { return }
         let id: String
@@ -262,11 +294,11 @@ final class AppModel: ObservableObject {
                 guard generation == currentGeneration else { return }
                 try TokenVault.save(credential)
                 if snapshot?.viewer.login != viewer.login {
-                    snapshot = nil
                     tabs = []
                     selectedTab = nil
                     reviewModels.removeAll()
                     reviewDrafts.removeAll()
+                    snapshot = InboxSnapshot(viewer: viewer, pullRequests: [])
                 }
                 token = credential
                 isDemo = false
@@ -275,6 +307,7 @@ final class AppModel: ObservableObject {
                 isConnected = true
                 showConnection = false
                 NSApp.activate()
+                persistWorkspace()
                 await refresh()
             } catch is CancellationError {
                 return
