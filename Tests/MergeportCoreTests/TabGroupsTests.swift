@@ -39,3 +39,12 @@ struct TabGroupsTests {
     #expect(TabGroups.title("Fix routing", without: nil) == "Fix routing")
   }
 }
+
+struct TabSizingTests {
+  @Test func tabsShareTheStripWithinBounds() {
+    #expect(TabSizing.width(tabs: 2, available: 2000) == TabSizing.maximum)
+    #expect(TabSizing.width(tabs: 5, available: 1000) == 200)
+    #expect(TabSizing.width(tabs: 30, available: 1000) == TabSizing.minimum)
+    #expect(TabSizing.width(tabs: 0, available: 1000) == TabSizing.maximum)
+  }
+}

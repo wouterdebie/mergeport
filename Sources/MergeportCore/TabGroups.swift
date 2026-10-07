@@ -60,3 +60,29 @@ public enum TabGroups {
     return result.isEmpty ? title : result
   }
 }
+
+/// What review tabs are grouped by. Each group shows its shared label once.
+public enum TabGrouping: String, CaseIterable, Codable, Sendable {
+  case related, ticket, branch, repository, none
+
+  public var title: String {
+    switch self {
+    case .related: "Ticket or source branch"
+    case .ticket: "Ticket"
+    case .branch: "Source branch"
+    case .repository: "Repository"
+    case .none: "Don't group"
+    }
+  }
+}
+
+/// Chrome-style tab sizing: tabs share the strip until they reach their minimum width, then it scrolls.
+public enum TabSizing {
+  public static let maximum: Double = 280
+  public static let minimum: Double = 104
+
+  public static func width(tabs: Int, available: Double) -> Double {
+    guard tabs > 0 else { return maximum }
+    return min(maximum, max(minimum, (available / Double(tabs)).rounded(.down)))
+  }
+}

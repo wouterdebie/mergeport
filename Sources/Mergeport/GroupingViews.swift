@@ -19,6 +19,13 @@ struct GroupingSettingsView: View {
                 Text("Filters apply first. Source-branch groups stay within the same repository and source fork; ticket groups can span repositories.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Review tabs") {
+                Picker("Group tabs by", selection: $model.tabGrouping) {
+                    ForEach(TabGrouping.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Text("Related tabs open next to each other and show the shared ticket, branch or repository once at the start of the group.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section("Reusable branch groups") {
                 TextField("Branch suffixes", text: $suffixes, prompt: Text("-staging, -test"))
                     .focused($suffixesFocused)

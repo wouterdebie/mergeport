@@ -304,6 +304,8 @@ private struct TabStripGeometry: ViewModifier {
 struct MainWindow: View {
     @EnvironmentObject var model: AppModel
     @State private var tabStrip = TabStripMetrics()
+    @State private var tabBarWidth: CGFloat = 0
+    @State private var overviewTabWidth: CGFloat = 130
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
 
@@ -521,24 +523,44 @@ struct MainWindow: View {
                                     in: RoundedRectangle(cornerRadius: 7))
                         .contentShape(RoundedRectangle(cornerRadius: 7))
                 }.buttonStyle(.plain)
+                .background(GeometryReader { proxy in
+                    Color.clear.onAppear { overviewTabWidth = proxy.size.width }
+                        .onChange(of: proxy.size.width) { _, width in overviewTabWidth = width }
+                })
                 let tabs = model.tabs
-                ForEach(TabGroups.runs(tabs) { model.isRelated($0.pr, $1.pr) }, id: \.self) { run in
-                    if run.count > 1 {
+                let runs = TabGroups.runs(tabs) { model.tabsRelated($0.pr, $1.pr) }
+                let labels = runs.map { model.tabGroupLabel($0.map { tabs[$0].pr }) }
+                let width = tabWidth(runs: runs, labels: labels)
+                ForEach(Array(runs.enumerated()), id: \.element) { position, run in
+                    if let label = labels[position] {
                         HStack(spacing: 2) {
-                            ForEach(run, id: \.self) { index in tabItem(tabs[index], index: index) }
+                            Text(label)
+                                .font(Self.groupLabelFont)
+                                .foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                                .frame(maxWidth: Self.groupLabelMaxWidth)
+                                .padding(.horizontal, 8)
+                                .help("Grouped by \(model.tabGrouping.title.lowercased()): \(label)")
+                            ForEach(run, id: \.self) { index in
+                                tabItem(tabs[index], index: index, width: width, groupLabel: label)
+                            }
                         }
                         .padding(.horizontal, 2)
                         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
                         .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.1)))
-                        .help("Related PRs")
                     } else {
-                        tabItem(tabs[run.lowerBound], index: run.lowerBound)
+                        ForEach(run, id: \.self) { index in
+                            tabItem(tabs[index], index: index, width: width, groupLabel: nil)
+                        }
                     }
                 }
             }.padding(.horizontal, 10).padding(.vertical, 5)
         }
         .scrollIndicators(.never)
         .modifier(TabStripGeometry(geometry: $tabStrip))
+        .background(GeometryReader { proxy in
+            Color.clear.onAppear { tabBarWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, width in tabBarWidth = width }
+        })
         .overlay(alignment: .bottom) { thinScroller }
         .background(.bar)
         .onChange(of: model.selectedTab) { _, id in
@@ -548,29 +570,59 @@ struct MainWindow: View {
         }
     }
 
-    private func tabItem(_ tab: ReviewTab, index: Int) -> some View {
-        let ticket = model.ticket(for: tab.pr)
-        return HStack(spacing: 8) {
-                HStack(spacing: 7) {
-                    if let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) { tabHint(hint) }
-                    let status = YardPalette.status(tab.pr)
-                    Image(systemName: status.symbol).foregroundStyle(status.color)
-                    Text("#\(String(tab.pr.number))").monospacedDigit().foregroundStyle(.secondary)
-                    if let ticket {
-                        Text(ticket).font(.callout.monospaced().weight(.medium)).foregroundStyle(.secondary)
-                    }
-                    Text(TabGroups.title(tab.pr.title, without: ticket))
-                        .lineLimit(1).truncationMode(.tail).frame(maxWidth: 220, alignment: .leading)
-                    Text(tab.pr.base).font(.caption.monospaced().weight(.bold))
-                        .foregroundStyle(Color.branchBlue)
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
-                }.font(.callout)
-            Button { model.closeTab(tab.id) } label: {
-                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-            }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+    private static let groupLabelFont = Font.system(size: 12, weight: .semibold, design: .monospaced)
+    private static let groupLabelMaxWidth: CGFloat = 150
+
+    /// Width left for tabs after Overview, spacing and group labels, shared Chrome-style.
+    private func tabWidth(runs: [Range<Int>], labels: [String?]) -> CGFloat {
+        let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .semibold)
+        let chrome = labels.reduce(CGFloat(0)) { total, label in
+            guard let label else { return total }
+            let text = (label as NSString).size(withAttributes: [.font: font]).width
+            return total + min(Self.groupLabelMaxWidth, ceil(text)) + 16 + 4 + 2
         }
-        .padding(.horizontal, 12).padding(.vertical, 12)
+        let gaps = CGFloat(runs.reduce(0) { $0 + $1.count }) * 4
+        let available = tabBarWidth - 20 - overviewTabWidth - gaps - chrome
+        return CGFloat(TabSizing.width(tabs: model.tabs.count, available: Double(available)))
+    }
+
+    private func tabItem(_ tab: ReviewTab, index: Int, width: CGFloat, groupLabel: String?) -> some View {
+        let ticket = model.ticket(for: tab.pr)
+        let selected = model.selectedTab == tab.id
+        let compact = width < 190
+        return HStack(spacing: 7) {
+            if let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) { tabHint(hint) }
+            let status = YardPalette.status(tab.pr)
+            Image(systemName: status.symbol).foregroundStyle(status.color)
+            Text("#\(String(tab.pr.number))").monospacedDigit().foregroundStyle(.secondary)
+                .fixedSize().layoutPriority(2)
+            if let ticket, ticket != groupLabel, width >= 240 {
+                Text(ticket).font(.callout.monospaced().weight(.medium)).foregroundStyle(.secondary)
+                    .lineLimit(1).fixedSize()
+            }
+            if !compact {
+                Text(TabGroups.title(tab.pr.title, without: ticket))
+                    .lineLimit(1).truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Spacer(minLength: 0)
+            }
+            if width >= 135 {
+                Text(tab.pr.base).font(.caption.monospaced().weight(.bold))
+                    .foregroundStyle(Color.branchBlue)
+                    .lineLimit(1).truncationMode(.middle).layoutPriority(1)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
+            }
+            if selected || width >= 120 {
+                Button { model.closeTab(tab.id) } label: {
+                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, width < 150 ? 9 : 12).padding(.vertical, 12)
+        .frame(width: width)
         .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
         .contentShape(RoundedRectangle(cornerRadius: 7))
         .onTapGesture { model.selectTab(tab.id) }

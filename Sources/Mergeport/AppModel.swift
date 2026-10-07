@@ -42,6 +42,14 @@ final class AppModel: ObservableObject {
     @Published var settingsTab: SettingsTab = .general
     @Published var repositories: [String]
     @Published var refreshInterval: Int
+    @Published var tabGrouping: TabGrouping {
+        didSet {
+            guard tabGrouping != oldValue else { return }
+            defaults.set(tabGrouping.rawValue, forKey: "tabGrouping")
+            tabs = TabGroups.clustered(tabs) { tabsRelated($0.pr, $1.pr) }
+            persistWorkspace()
+        }
+    }
     @Published var isConnected = false
     @Published var isRefreshing = false
     @Published var isSigningIn = false
@@ -92,6 +100,7 @@ final class AppModel: ObservableObject {
         repositories = defaults.stringArray(forKey: "repositories") ?? []
         let interval = defaults.integer(forKey: "refreshInterval")
         refreshInterval = [60, 120, 300, 600].contains(interval) ? interval : 120
+        tabGrouping = defaults.string(forKey: "tabGrouping").flatMap(TabGrouping.init(rawValue:)) ?? .related
         linearClientID = (Bundle.main.object(forInfoDictionaryKey: LinearOAuth.bundleInfoKey) as? String)
             .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         defer { trackNavigation() }
@@ -114,7 +123,7 @@ final class AppModel: ObservableObject {
                 snapshot = workspace.snapshot
                 tabs = TabGroups.clustered(
                     workspace.tabs.filter { GitHubNavigation.belongsTo($0.location, pr: $0.pr) },
-                    related: { self.isRelated($0.pr, $1.pr) })
+                    related: { self.tabsRelated($0.pr, $1.pr) })
                 selectedTab = tabs.contains { $0.id == workspace.selectedTab } ? workspace.selectedTab : nil
                 reviewDrafts = workspace.drafts ?? [:]
             }
@@ -345,7 +354,7 @@ final class AppModel: ObservableObject {
         } else {
             let safeLocation = location.flatMap { GitHubNavigation.belongsTo($0, pr: pr) ? $0 : nil } ?? pr.url
             let tab = ReviewTab(pr: pr, location: safeLocation)
-            tabs.insert(tab, at: TabGroups.insertionIndex(for: tab, in: tabs) { isRelated($0.pr, $1.pr) })
+            tabs.insert(tab, at: TabGroups.insertionIndex(for: tab, in: tabs) { tabsRelated($0.pr, $1.pr) })
             selectedTab = pr.id
         }
         persistWorkspace()
@@ -523,11 +532,43 @@ final class AppModel: ObservableObject {
     /// Same source branch (staging/main pair) or same Linear ticket, as in Related PRs.
     func isRelated(_ a: PullRequest, _ b: PullRequest) -> Bool {
         guard a.id != b.id else { return false }
-        let left = BranchIdentity(a), right = BranchIdentity(b)
-        if left.repository == right.repository && left.sourceRepository == right.sourceRepository
-            && canonicalBranch(a) == canonicalBranch(b) { return true }
+        if sameBranch(a, b) { return true }
         guard let ticket = ticket(for: a) else { return false }
         return ticket == self.ticket(for: b)
+    }
+
+    func tabsRelated(_ a: PullRequest, _ b: PullRequest) -> Bool {
+        guard a.id != b.id else { return false }
+        switch tabGrouping {
+        case .related: return isRelated(a, b)
+        case .ticket: return ticket(for: a).map { $0 == ticket(for: b) } ?? false
+        case .branch: return sameBranch(a, b)
+        case .repository: return a.repository.lowercased() == b.repository.lowercased()
+        case .none: return false
+        }
+    }
+
+    /// The label a tab group shows once, so its tabs don't repeat it.
+    func tabGroupLabel(_ prs: [PullRequest]) -> String? {
+        guard let first = prs.first, prs.count > 1 else { return nil }
+        let tickets = Set(prs.map { ticket(for: $0) })
+        let branches = Set(prs.map { canonicalBranch($0) })
+        switch tabGrouping {
+        case .ticket: return ticket(for: first)
+        case .branch: return canonicalBranch(first)
+        case .repository: return first.repository.split(separator: "/").last.map(String.init)
+        case .none: return nil
+        case .related:
+            if tickets.count == 1, let ticket = tickets.first ?? nil { return ticket }
+            if branches.count == 1 { return branches.first }
+            return ticket(for: first) ?? canonicalBranch(first)
+        }
+    }
+
+    private func sameBranch(_ a: PullRequest, _ b: PullRequest) -> Bool {
+        let left = BranchIdentity(a), right = BranchIdentity(b)
+        return left.repository == right.repository && left.sourceRepository == right.sourceRepository
+            && canonicalBranch(a) == canonicalBranch(b)
     }
 
     func canonicalBranch(_ pr: PullRequest) -> String {
