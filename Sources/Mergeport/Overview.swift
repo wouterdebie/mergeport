@@ -1,0 +1,753 @@
+import AppKit
+import MergeportCore
+import SwiftUI
+
+enum YardPalette {
+    static let cyan = Color(red: 0.49, green: 1, blue: 0.94)
+    static let blue = Color(red: 0.34, green: 0.72, blue: 1)
+    static let purple = Color(red: 0.64, green: 0.36, blue: 1)
+    /// GitHub's merged status, nudged toward pink so it reads apart from the purple accents.
+    static let merged = Color(red: 0.76, green: 0.39, blue: 0.94)
+    static let closed = Color(red: 0.9, green: 0.3, blue: 0.28)
+
+    /// Icon and color for a PR: merged/closed first, otherwise its workflow stage.
+    static func status(_ pr: PullRequest) -> (symbol: String, color: Color) {
+        switch pr.state {
+        case "MERGED": ("arrow.triangle.merge", merged)
+        case "CLOSED": ("xmark.circle", closed)
+        default: (pr.stage.symbol, color(pr.stage))
+        }
+    }
+    static let gradient = LinearGradient(colors: [cyan, blue, purple], startPoint: .topLeading, endPoint: .bottomTrailing)
+
+    static func color(_ stage: WorkflowStage) -> Color {
+        switch stage {
+        case .draft: .secondary
+        case .attention: .orange
+        case .review: .purple
+        case .waiting: .blue
+        case .ready: .green
+        }
+    }
+
+    /// A concrete color per stage for card backgrounds; `.secondary` is too faint to tint with.
+    static func tint(_ stage: WorkflowStage) -> Color {
+        stage == .draft ? .gray : color(stage)
+    }
+}
+
+struct YardMark: View {
+    var size: CGFloat = 34
+    var body: some View {
+        Image(systemName: "arrow.triangle.pull")
+            .font(.system(size: size * 0.52, weight: .bold))
+            .foregroundStyle(YardPalette.gradient)
+            .frame(width: size, height: size)
+            .background(Color(red: 0.04, green: 0.06, blue: 0.13), in: RoundedRectangle(cornerRadius: size * 0.25))
+            .accessibilityHidden(true)
+    }
+}
+
+struct StageBadge: View {
+    let stage: WorkflowStage
+    var body: some View {
+        Label(stage.title, systemImage: stage.symbol)
+            .font(.caption.weight(.medium)).foregroundStyle(YardPalette.color(stage))
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(YardPalette.color(stage).opacity(0.12), in: Capsule())
+    }
+}
+
+struct CopilotStatusBadge: View {
+    let state: CopilotState
+
+    private var title: String {
+        switch state {
+        case .reviewed: "Copilot reviewed"
+        case .requested: "Copilot pending"
+        case .outdated: "Copilot outdated"
+        case .notRequested: "No Copilot review"
+        case .unknown: "Copilot unknown"
+        }
+    }
+
+    private var color: Color {
+        switch state {
+        case .reviewed: .green
+        case .requested: .blue
+        case .outdated, .notRequested: .orange
+        case .unknown: .secondary
+        }
+    }
+
+    var body: some View {
+        Label(title, systemImage: state == .reviewed ? "checkmark.seal.fill" : state == .requested ? "clock.fill" : "sparkles")
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(color.opacity(0.13), in: RoundedRectangle(cornerRadius: 7))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(color.opacity(0.4)))
+            .fixedSize()
+            .help(state == .requested ? "Copilot was requested. GitHub does not expose whether it has started running." : state.title)
+            .accessibilityLabel(title)
+    }
+}
+
+/// Repo, number, ticket and target branch: the facts to spot at a glance.
+struct PRKeyFacts: View {
+    let pr: PullRequest
+    let ticket: String?
+    var issue: LinearIssue?
+    var large = false
+    var openIssue: ((URL) -> Void)?
+
+    var body: some View {
+        let owner = pr.repository.split(separator: "/").first.map { "\($0)/" } ?? ""
+        let name = pr.repository.split(separator: "/").last.map(String.init) ?? pr.repository
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "shippingbox.fill").foregroundStyle(.secondary)
+                (Text(owner).foregroundStyle(.secondary) + Text(name).fontWeight(.bold))
+            }
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+            Text("#" + String(pr.number)).fontWeight(.semibold).monospaced().foregroundStyle(.tint)
+            if let ticket {
+                if let issue, let openIssue {
+                    Button { openIssue(issue.url) } label: { ticketChip(ticket, linked: true) }
+                        .buttonStyle(.plain)
+                        .help("\(issue.identifier): \(issue.title)\n\(issue.state) · Open in Linear")
+                } else {
+                    ticketChip(ticket, linked: false)
+                }
+            }
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.right").font(.system(size: large ? 10 : 9, weight: .bold))
+                Text(pr.base).fontWeight(.bold).monospaced()
+            }
+            .foregroundStyle(Color.branchBlue)
+            .padding(.horizontal, 7).padding(.vertical, 3)
+            .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.branchBlue.opacity(0.4)))
+            .help("Target branch")
+        }
+        .font(.system(size: large ? 13 : 12)).lineLimit(1).textSelection(.enabled)
+    }
+
+    private func ticketChip(_ ticket: String, linked: Bool) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: linked ? "arrow.up.forward.square" : "ticket")
+            Text(ticket).fontWeight(.semibold).monospaced()
+            if let issue { LinearStateDot(issue: issue) }
+        }
+        .foregroundStyle(Color.ticketInk)
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.primary.opacity(linked ? 0.16 : 0)))
+        .contentShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Linear's workflow state as a small colored ring, like Linear's own status icons.
+struct LinearStateDot: View {
+    let issue: LinearIssue
+    var body: some View {
+        let color = Color(hex: issue.stateColor) ?? .secondary
+        ZStack {
+            Circle().stroke(color, lineWidth: 1.5)
+            if issue.stateType == "completed" { Circle().fill(color) }
+            else if issue.stateType == "started" { Circle().trim(from: 0, to: 0.5).fill(color).rotationEffect(.degrees(-90)).padding(2.5) }
+            else if issue.stateType == "canceled" { Image(systemName: "xmark").font(.system(size: 6, weight: .bold)).foregroundStyle(color) }
+        }
+        .frame(width: 10, height: 10)
+        .help(issue.state)
+    }
+}
+
+/// The linked Linear issue under a PR title: what it is about and where it stands in Linear.
+struct LinearIssueLine: View {
+    let issue: LinearIssue
+    let open: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 7) {
+                Text("Linear").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 5).padding(.vertical, 1)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 4))
+                Text(issue.title).foregroundStyle(hovering ? .primary : .secondary)
+                    .lineLimit(1).truncationMode(.tail)
+                let color = Color(hex: issue.stateColor) ?? .secondary
+                HStack(spacing: 5) {
+                    LinearStateDot(issue: issue)
+                    Text(issue.state).font(.caption.weight(.medium))
+                }
+                .foregroundStyle(color)
+                .padding(.horizontal, 7).padding(.vertical, 2)
+                .background(color.opacity(0.12), in: Capsule())
+                .fixedSize()
+                Image(systemName: "arrow.up.forward").font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary).opacity(hovering ? 1 : 0)
+            }
+            .font(.callout)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("\(issue.identifier) is “\(issue.state)” in Linear. Click to open the issue.")
+    }
+}
+
+extension Color {
+    init?(hex: String?) {
+        guard let hex, hex.hasPrefix("#"), hex.count == 7, let value = Int(hex.dropFirst(), radix: 16) else { return nil }
+        self.init(red: Double((value >> 16) & 0xff) / 255, green: Double((value >> 8) & 0xff) / 255, blue: Double(value & 0xff) / 255)
+    }
+}
+
+private struct TabStripMetrics: Equatable {
+    var offset: CGFloat = 0
+    var content: CGFloat = 0
+    var visible: CGFloat = 0
+}
+
+private struct TabStripGeometry: ViewModifier {
+    @Binding var geometry: TabStripMetrics
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.onScrollGeometryChange(for: TabStripMetrics.self) {
+                TabStripMetrics(offset: $0.contentOffset.x, content: $0.contentSize.width, visible: $0.containerSize.width)
+            } action: { _, value in geometry = value }
+        } else {
+            content
+        }
+    }
+}
+
+struct MainWindow: View {
+    @EnvironmentObject var model: AppModel
+    @State private var tabStrip = TabStripMetrics()
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            VStack(spacing: 0) {
+                tabBar
+                Divider()
+                if let tab = model.activeTab {
+                    NativeReviewView(tab: tab, review: model.reviewModel(for: tab)).id(tab.id)
+                } else if model.isConnected || model.isDemo {
+                    Overview()
+                } else {
+                    WelcomeView()
+                }
+            }
+        }
+        .navigationTitle("Mergeport")
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button { model.goBack() } label: { Image(systemName: "chevron.left") }
+                    .disabled(!model.canGoBack).help("Back (Command-Left Arrow)")
+                Button { model.goForward() } label: { Image(systemName: "chevron.right") }
+                    .disabled(!model.canGoForward).help("Forward (Command-Right Arrow)")
+            }
+            ToolbarItemGroup {
+                Button { Task { await model.refresh() } } label: {
+                    if model.isRefreshing {
+                        ProgressView().controlSize(.small).frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                    .disabled(!model.isConnected || model.isRefreshing).help("Refresh overview (Shift-Command-R)")
+                Button { openSettings() } label: { Image(systemName: "gearshape") }.help("Settings")
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if let error = model.error {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(error).font(.callout).textSelection(.enabled)
+                    Spacer()
+                    Button { model.error = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                }.padding(12).background(.regularMaterial)
+            }
+        }
+        .overlay(alignment: .top) {
+            if model.showPalette {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.12).ignoresSafeArea().onTapGesture { model.showPalette = false }
+                    CommandPalette().environmentObject(model).padding(.top, 70)
+                }
+            }
+        }
+        .sheet(isPresented: $model.showConnection, onDismiss: { if model.isSigningIn { model.cancelSignIn() } }) {
+            ConnectionView().environmentObject(model)
+        }
+        .sheet(isPresented: $model.showRepositories) {
+            RepositorySettings().environmentObject(model).padding(24).frame(width: 560, height: 480)
+        }
+        .sheet(item: $model.branchGroupingTarget) { pr in BranchGroupEditor(pr: pr).environmentObject(model) }
+        .sheet(isPresented: $model.showGroupingSettings) {
+            VStack {
+                GroupingSettingsView()
+                HStack { Spacer(); Button("Done") { model.showGroupingSettings = false }.keyboardShortcut(.defaultAction) }.padding(16)
+            }.environmentObject(model).frame(width: 620, height: 560)
+        }
+        .task {
+            await model.start()
+            if model.isDemo, ProcessInfo.processInfo.arguments.contains("--demo-review"),
+               let pr = model.pullRequests.first(where: { $0.needsMyReview }) { model.open(pr) }
+            await SmokeTest.runIfRequested(model: model)
+        }
+        .alert(item: $model.tabToClose) { tab in
+            Alert(title: Text("Discard the draft for \(tab.pr.displayNumber)?"),
+                message: Text("Closing this tab discards its unsent review, discussion comment and thread replies. Submitted GitHub comments are unchanged."),
+                primaryButton: .destructive(Text("Discard and close")) { model.closeTab(tab.id, discardingDraft: true) },
+                secondaryButton: .cancel())
+        }
+        .task(id: model.refreshInterval) {
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .seconds(model.refreshInterval))
+                    if scenePhase == .active { await model.refresh() }
+                }
+            } catch is CancellationError {
+                return
+            } catch { model.report(error) }
+        }
+        .onChange(of: model.selectedTab) { _, newValue in
+            if newValue == nil { Task { await model.refresh() } }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await model.refresh() } }
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    sidebarSection("INBOX") {
+                        ForEach(InboxScope.allCases, id: \.self) { scope in
+                            sidebarRow(scope.title, symbol: scope == .all ? "tray.full" : scope == .mine ? "person" : "text.bubble",
+                                       count: model.pullRequests.filter { scope.includes($0, login: model.login) }.count,
+                                       selected: model.scope == scope && model.repositoryFilter == nil && model.stageFilter == nil,
+                                       shortcut: SidebarDestination.forScope(scope).keyLabel) {
+                                model.showOverview(scope: scope)
+                            }
+                        }
+                    }
+                    sidebarSection("WORKFLOW") {
+                        ForEach(WorkflowStage.allCases, id: \.self) { stage in
+                            sidebarRow(stage.title, symbol: stage.symbol,
+                                       count: model.pullRequests.filter { $0.stage == stage }.count,
+                                       selected: model.stageFilter == stage,
+                                       color: YardPalette.color(stage),
+                                       shortcut: SidebarDestination.forStage(stage).keyLabel) {
+                                model.showOverview(scope: .all, stage: stage)
+                            }
+                        }
+                    }
+                    sidebarSection("REPOSITORIES") {
+                        ForEach(model.knownRepositories, id: \.self) { repo in
+                            sidebarRow(repo, symbol: "shippingbox", count: model.pullRequests.filter { $0.repository == repo }.count,
+                                       selected: model.repositoryFilter == repo) {
+                                model.showOverview(scope: .all, repository: repo)
+                            }
+                        }
+                        Button { model.showRepositories = true } label: {
+                            Label("Manage repositories", systemImage: "plus").font(.callout)
+                        }.buttonStyle(.plain).foregroundStyle(.secondary).padding(.leading, 10)
+                    }
+                }.padding(.horizontal, 10).padding(.bottom, 18)
+            }
+            Divider()
+            HStack(spacing: 8) {
+                Circle().fill(model.isDemo ? Color.orange : model.isConnected ? .green : .secondary).frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(model.isDemo ? "Sample workspace" : model.login.isEmpty ? "Not connected" : "@\(model.login)")
+                        .font(.caption.weight(.medium))
+                    if model.isDemo {
+                        Button("Connect GitHub") { model.showConnection = true }.font(.caption).buttonStyle(.link)
+                    } else if model.isConnected {
+                        if model.isRefreshing {
+                            Text("Refreshing GitHub…").font(.caption2).foregroundStyle(.secondary)
+                        } else if let fetched = model.snapshot?.fetchedAt {
+                            Text("Last sync: \(fetched.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .help("When GitHub data last loaded successfully—not a countdown to the next refresh.")
+                        }
+                        Text(scenePhase == .active
+                             ? "Auto-refresh: every \(String(model.refreshInterval / 60)) min"
+                             : "Auto-refresh paused while inactive")
+                            .font(.caption2).foregroundStyle(.secondary)
+                            .help("Refresh resumes when Mergeport becomes active. You can also refresh manually.")
+                    }
+                }
+                Spacer()
+            }.padding(16)
+        }
+        .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 340)
+    }
+
+    private func sidebarSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                .padding(.leading, 10).padding(.bottom, 3)
+            content()
+        }
+    }
+
+    private func sidebarRow(_ title: String, symbol: String, count: Int, selected: Bool,
+                            color: Color = .secondary, shortcut: String? = nil,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: symbol).foregroundStyle(selected ? Color.accentColor : color).frame(width: 18)
+                Text(title).lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 4)
+                if model.showShortcutHints, let shortcut {
+                    ShortcutHint(label: shortcut)
+                } else {
+                    Text("\(count)").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout).padding(.horizontal, 10).padding(.vertical, 8)
+            .background(selected ? Color.accentColor.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 7))
+            .contentShape(Rectangle())
+        }.buttonStyle(.plain).help(shortcut.map { "\(title) (\($0))" } ?? title)
+    }
+
+    @ViewBuilder private func tabHint(_ label: String) -> some View {
+        if model.showShortcutHints {
+            ShortcutHint(label: label)
+        }
+    }
+
+    private var tabBar: some View {
+        ScrollViewReader { proxy in
+        ScrollView(.horizontal) {
+            HStack(spacing: 4) {
+                Button { model.selectTab(nil) } label: {
+                    HStack(spacing: 6) {
+                        Label("Overview", systemImage: "square.grid.2x2")
+                        tabHint("⌘1")
+                    }
+                        .font(.callout.weight(.medium)).padding(.horizontal, 16).padding(.vertical, 11)
+                        .background(model.selectedTab == nil ? Color.accentColor.opacity(0.12) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7))
+                }.buttonStyle(.plain)
+                ForEach(Array(model.tabs.enumerated()), id: \.element.id) { index, tab in
+                    HStack(spacing: 8) {
+                        Button { model.selectTab(tab.id) } label: {
+                            HStack(spacing: 7) {
+                                if let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) { tabHint(hint) }
+                                let status = YardPalette.status(tab.pr)
+                                Image(systemName: status.symbol).foregroundStyle(status.color)
+                                Text("#\(String(tab.pr.number)) \(tab.pr.title)")
+                                    .lineLimit(1).truncationMode(.tail).frame(maxWidth: 220, alignment: .leading)
+                                Text(tab.pr.base).font(.caption.monospaced().weight(.bold))
+                                    .foregroundStyle(Color.branchBlue)
+                                    .padding(.horizontal, 6).padding(.vertical, 2)
+                                    .background(Color.branchBlue.opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
+                            }.font(.callout)
+                        }.buttonStyle(.plain)
+                        Button { model.closeTab(tab.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
+                        }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 12)
+                    .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
+                    .help(tab.pr.displayTitle)
+                    .id(tab.id)
+                }
+            }.padding(.horizontal, 10).padding(.vertical, 5)
+        }
+        .scrollIndicators(.never)
+        .modifier(TabStripGeometry(geometry: $tabStrip))
+        .overlay(alignment: .bottom) { thinScroller }
+        .background(.bar)
+        .onChange(of: model.selectedTab) { _, id in
+            guard let id else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { proxy.scrollTo(id) }
+        }
+        }
+    }
+
+    /// Merged and closed tabs keep a status tint so they stand out; the selected tab is stronger.
+    private func tabBackground(_ tab: ReviewTab) -> Color {
+        let selected = model.selectedTab == tab.id
+        guard tab.pr.state != "OPEN" else { return selected ? Color.accentColor.opacity(0.12) : .clear }
+        return YardPalette.status(tab.pr).color.opacity(selected ? 0.22 : 0.12)
+    }
+
+    /// A 3pt indicator instead of the system scroller, shown only when tabs overflow.
+    @ViewBuilder private var thinScroller: some View {
+        let width = tabStrip.visible
+        let content = tabStrip.content
+        if content > width + 1, width > 0 {
+            let thumb = max(40, width * width / content)
+            let progress = min(1, max(0, tabStrip.offset / (content - width)))
+            Capsule().fill(Color.primary.opacity(0.28))
+                .frame(width: thumb, height: 3)
+                .offset(x: (width - thumb) * progress)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct Overview: View {
+    @EnvironmentObject var model: AppModel
+    @FocusState private var searchFocused: Bool
+
+    private var title: String { model.repositoryFilter ?? model.scope.title }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(title).font(.system(size: 28, weight: .bold))
+                        Text("Your branches, reviews and next steps. One place.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.isDemo {
+                        Button("Connect GitHub") { model.showConnection = true }.buttonStyle(.borderedProminent)
+                    }
+                }
+                HStack(spacing: 10) {
+                    ForEach(WorkflowStage.allCases, id: \.self) { stage in
+                        let count = model.pullRequests.filter {
+                            model.scope.includes($0, login: model.login)
+                                && (model.repositoryFilter == nil || $0.repository == model.repositoryFilter) && $0.stage == stage
+                        }.count
+                        Button { model.stageFilter = model.stageFilter == stage ? nil : stage } label: {
+                            VStack(alignment: .leading, spacing: 9) {
+                                HStack {
+                                    Image(systemName: stage.symbol).foregroundStyle(YardPalette.color(stage))
+                                    Spacer()
+                                    Text("\(count)").font(.system(size: 24, weight: .semibold, design: .rounded))
+                                }
+                                Text(stage.title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                            }
+                            .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                            .background(model.stageFilter == stage ? YardPalette.color(stage).opacity(0.1) : Color.primary.opacity(0.025),
+                                        in: RoundedRectangle(cornerRadius: 12))
+                            .overlay(RoundedRectangle(cornerRadius: 12)
+                                .stroke(model.stageFilter == stage ? YardPalette.color(stage).opacity(0.5) : Color.primary.opacity(0.08)))
+                        }.buttonStyle(.plain)
+                    }
+                }
+                HStack(spacing: 12) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Search PRs, repositories or branches", text: $model.search)
+                            .textFieldStyle(.plain).focused($searchFocused)
+                        if !model.search.isEmpty {
+                            Button { model.search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .buttonStyle(.plain).foregroundStyle(.secondary)
+                        }
+                    }.padding(10).background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    Picker("Group by", selection: Binding(get: { model.groupingPreferences.mode }, set: { model.setGroupingMode($0) })) {
+                        ForEach(PRGrouping.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }.frame(width: 220)
+                    Button { model.showGroupingSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                        .buttonStyle(.borderless).help("Configure ticket prefixes and branch aliases")
+                    if let stage = model.stageFilter {
+                        Button {
+                            model.stageFilter = nil
+                        } label: { Label(stage.title, systemImage: "xmark.circle") }.font(.caption)
+                    }
+                }
+            }.padding(24)
+            Divider()
+            if model.filteredPRs.isEmpty {
+                ContentUnavailableView {
+                    Label(model.isRefreshing ? "Loading pull requests" : "Nothing in this queue", systemImage: "tray")
+                } description: {
+                    Text(model.search.isEmpty ? "Your own open PRs and review requests appear automatically. Add repositories to follow everyone else's PRs."
+                         : "Try another title, branch, PR number or repository.")
+                } actions: {
+                    if model.stageFilter != nil || !model.search.isEmpty {
+                        Button("Clear filters") { model.stageFilter = nil; model.search = "" }
+                    } else {
+                        Button("Add repositories") { model.showRepositories = true }
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        switch model.groupingResult {
+                        case .success(let groups):
+                            ForEach(groups) { group in
+                                if model.groupingPreferences.mode != .none {
+                                HStack(spacing: 8) {
+                                    Image(systemName: group.symbol).foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        HStack(spacing: 8) {
+                                            Text(group.title).font(.headline).textSelection(.enabled)
+                                            if let issue = groupIssue(group) {
+                                                LinearStateDot(issue: issue)
+                                                Text(issue.title).font(.headline.weight(.regular)).lineLimit(1)
+                                                Text(issue.state).font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        if let subtitle = group.subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+                                    }
+                                    Text("\(group.pullRequests.count)")
+                                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                    Spacer()
+                                    if let issue = groupIssue(group) {
+                                        Button { model.openExternal(issue.url) } label: {
+                                            Label("Open in Linear", systemImage: "arrow.up.forward.square")
+                                        }.buttonStyle(.borderless).font(.caption).disabled(model.isDemo)
+                                    }
+                                }.padding(.top, 8).padding(.bottom, 2)
+                                }
+                                ForEach(group.pullRequests) { PRRow(pr: $0) }
+                            }
+                        case .failure(let error):
+                            Label(error.localizedDescription, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                            ForEach(model.filteredPRs) { PRRow(pr: $0) }
+                        }
+                    }.padding(24)
+                }
+            }
+            Divider()
+            HStack {
+                Text("\(model.filteredPRs.count) open pull requests")
+                Spacer()
+                Text(model.isDemo ? "Sample data • no GitHub connection" : "Personal queues + followed repositories • GitHub enforces merge rules")
+            }.font(.caption).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.vertical, 10)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { focusSearchIfRequested() }
+        .onChange(of: model.searchFocusRequested) { focusSearchIfRequested() }
+    }
+
+    private func groupIssue(_ group: PullRequestGroup) -> LinearIssue? {
+        guard model.groupingPreferences.mode == .ticket, !group.isUnmatched else { return nil }
+        return model.linearIssues[group.title]
+    }
+
+    private func focusSearchIfRequested() {
+        if model.searchFocusRequested {
+            searchFocused = true
+            model.searchFocusRequested = false
+        }
+    }
+}
+
+private struct PRRow: View {
+    @EnvironmentObject var model: AppModel
+    let pr: PullRequest
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: pr.stage.symbol)
+                        .font(.system(size: 20)).foregroundStyle(YardPalette.color(pr.stage)).frame(width: 26).padding(.top, 3)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(alignment: .center, spacing: 8) {
+                            PRKeyFacts(pr: pr, ticket: model.ticket(for: pr), issue: model.linearIssue(for: pr),
+                                       openIssue: { model.openExternal($0) })
+                            Spacer(minLength: 10)
+                            StageBadge(stage: pr.stage)
+                        }
+                        Text(pr.title).font(.system(size: 14, weight: .semibold)).lineLimit(2)
+                        HStack(spacing: 7) {
+                            if let url = pr.authorAvatarURL {
+                                AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: {
+                                    Color.primary.opacity(0.08)
+                                }.frame(width: 16, height: 16).clipShape(Circle())
+                            }
+                            Text("by \(pr.isMine(model.login) ? "you" : "@\(pr.author)")").font(.caption)
+                            Text("·")
+                            Text("from").font(.caption)
+                            Text(pr.head).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle)
+                            Spacer()
+                            Text(pr.updatedAt, style: .relative).font(.caption)
+                        }.foregroundStyle(.secondary)
+                    }
+                }
+            HStack(spacing: 14) {
+                Label(pr.checks.title, systemImage: checkSymbol)
+                    .foregroundStyle(pr.checks == .failure ? Color.orange : pr.checks == .success ? .green : .secondary)
+                CopilotStatusBadge(state: pr.copilot)
+                if pr.unresolvedThreads > 0 {
+                    Label("\(pr.unresolvedThreads) unresolved", systemImage: "text.bubble").foregroundStyle(.orange)
+                }
+                Spacer(minLength: 4)
+                Text(pr.waitingReason).foregroundStyle(.secondary).lineLimit(1)
+            }.font(.caption).padding(.leading, 38)
+            let siblings = model.siblings(pr)
+            if !siblings.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch").foregroundStyle(.secondary)
+                    Text(siblings.contains(where: { $0.head != pr.head }) ? "Branch group" : "Same branch").foregroundStyle(.secondary)
+                    ForEach(siblings) { sibling in
+                        Button { model.open(sibling) } label: {
+                            HStack(spacing: 4) {
+                                Circle().fill(YardPalette.color(sibling.stage)).frame(width: 5, height: 5)
+                                Text("\(sibling.base) \(sibling.displayNumber)")
+                            }
+                        }.buttonStyle(.borderless).help("\(sibling.stage.title): \(sibling.title)")
+                    }
+                    Spacer()
+                }.font(.caption).padding(.leading, 38)
+            }
+        }
+        .padding(16).padding(.leading, 4)
+        .background(tint.opacity(hovering ? 0.13 : 0.07))
+        .overlay(alignment: .leading) { Rectangle().fill(tint.opacity(isDraft ? 0.55 : 0.85)).frame(width: 4) }
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12)
+            .stroke(tint.opacity(hovering ? 0.6 : 0.3)))
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .onTapGesture { model.open(pr) }
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isButton)
+        .onDisappear { if hovering { NSCursor.pop() } }
+        .accessibilityAction { model.open(pr) }
+        .contextMenu {
+            Button("Open review tab") { model.open(pr) }
+            Button("Open files changed") {
+                model.open(pr, location: URL(string: pr.url.absoluteString + "/files"))
+            }
+            Button("Open in browser") { model.openExternal(pr.url) }.disabled(model.isDemo)
+            if let issue = model.linearIssue(for: pr) {
+                Button("Open \(issue.identifier) in Linear") { model.openExternal(issue.url) }.disabled(model.isDemo)
+            }
+            Divider()
+            Button("Add source branch to group…") { model.branchGroupingTarget = pr }
+            Button("Copy link") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(pr.url.absoluteString, forType: .string)
+            }
+        }
+    }
+
+    private var isDraft: Bool { pr.stage == .draft }
+    private var tint: Color { YardPalette.tint(pr.stage) }
+
+    private var checkSymbol: String {
+        switch pr.checks {
+        case .success: "checkmark.circle"
+        case .failure: "xmark.circle"
+        case .pending: "clock"
+        case .none, .unknown: "minus.circle"
+        }
+    }
+}

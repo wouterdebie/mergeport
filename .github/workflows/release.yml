@@ -1,0 +1,182 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: releases
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '27.0'
+      - name: Report build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+      - name: Validate release tag
+        run: |
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || exit 1
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Resolve locked dependencies and test
+        run: |
+          swift package resolve
+          swift test --disable-automatic-resolution
+      - name: Build without release secrets
+        env:
+          BUILD_ARCH: arm64
+        run: bash scripts/bundle.sh
+      - name: Preserve framework symlinks and permissions
+        run: ditto -c -k --keepParent "dist/Mergeport.app" dist/Mergeport-build.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-bundle
+          path: dist/Mergeport-build.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: xcode-27
+    timeout-minutes: 130
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: '27.0'
+      - name: Report build environment
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned-bundle
+          path: dist
+      - name: Prepare unsigned bundle and verified signing tools
+        run: |
+          set -euo pipefail
+          echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          ditto -x -k dist/Mergeport-build.zip dist
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/sparkle.zip" \
+            https://github.com/sparkle-project/Sparkle/releases/download/2.10.0/Sparkle-for-Swift-Package-Manager.zip
+          printf '17e28312b8e18ab7cdbbe09a6fb28cc55a5479ec6c371dbc07cdecd2a14fd959  %s\n' \
+            "$RUNNER_TEMP/sparkle.zip" | shasum -a 256 --check
+          ditto -x -k "$RUNNER_TEMP/sparkle.zip" "$RUNNER_TEMP/sparkle-tools"
+      - name: Check Sparkle key against the pinned public key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set +x
+          set -euo pipefail
+          : "${SPARKLE_PRIVATE_KEY:?Missing SPARKLE_PRIVATE_KEY}"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" |
+            env -u SPARKLE_PRIVATE_KEY swift scripts/verify-sparkle-key.swift \
+              "$RUNNER_TEMP/sparkle-tools/bin/sign_update" \
+              Resources/Info.plist "dist/Mergeport.app/Contents/Info.plist"
+      # Match Davit's rotation hardening: no raw secrets at workflow/job scope.
+      # Build/test ran on a separate runner; private keys are never cached.
+      - name: Import the pinned certificate and sign
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          : "${MACOS_CERT_P12:?Missing MACOS_CERT_P12}"
+          : "${MACOS_CERT_PASSWORD:?Missing MACOS_CERT_PASSWORD}"
+          CERT="$RUNNER_TEMP/mergeport-signing.p12"
+          KEYCHAIN="$RUNNER_TEMP/mergeport-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          trap 'rm -f "$CERT"' EXIT
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$CERT"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$CERT"
+          unset MACOS_CERT_P12 MACOS_CERT_PASSWORD
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          unset KEYCHAIN_PASSWORD
+          security list-keychains -d user -s "$KEYCHAIN" "$HOME/Library/Keychains/login.keychain-db"
+          EXPECTED_CERT_SHA1="89AFE2B56FFCB7344A7600B5E38E97C68A544591"
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -F "$EXPECTED_CERT_SHA1" >/dev/null || {
+            echo "Wrong signing certificate. Export the rotated certificate pinned in Davit." >&2
+            exit 1
+          }
+          echo "CODESIGN_IDENTITY=$EXPECTED_CERT_SHA1" >> "$GITHUB_ENV"
+          CODESIGN_IDENTITY="$EXPECTED_CERT_SHA1" bash scripts/sign.sh
+          lipo "dist/Mergeport.app/Contents/MacOS/Mergeport" -verify_arch arm64
+      - name: Notarize and staple
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: bash scripts/notarize.sh
+      - name: Archive notarized application
+        run: bash scripts/prepare-release.sh
+      - name: Build and sign the drag-to-Applications disk image
+        run: |
+          set -euo pipefail
+          mkdir -p dist/download
+          bash scripts/make-dmg.sh "dist/Mergeport.app" dist/download/Mergeport.dmg
+          codesign --force --timestamp --sign "$CODESIGN_IDENTITY" dist/download/Mergeport.dmg
+          codesign --verify --strict dist/download/Mergeport.dmg
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/mergeport-signing.keychain-db"
+          if [ -f "$KEYCHAIN" ]; then
+            security delete-keychain "$KEYCHAIN"
+          fi
+      - name: Notarize and staple the disk image
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: bash scripts/notarize.sh dist/download/Mergeport.dmg
+      - name: Verify final disk image and checksum
+        run: |
+          set -euo pipefail
+          bash scripts/check-dmg.sh dist/download/Mergeport.dmg
+          cd dist/download
+          shasum -a 256 Mergeport.dmg > Mergeport.dmg.sha256
+      - name: Sign update archive and appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: bash scripts/sign-release.sh "$RUNNER_TEMP/sparkle-tools/bin"
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+            --title "Mergeport $VERSION" --generate-notes \
+            --notes "Download Mergeport.dmg, open it, and drag Mergeport into Applications. The DMG and app are Developer ID signed and notarized. Requires macOS 14+ on Apple Silicon. The ZIP remains available for Sparkle updates." \
+            dist/download/Mergeport.dmg \
+            dist/download/Mergeport.dmg.sha256 \
+            "dist/release/Mergeport-$VERSION.zip" \
+            "dist/release/Mergeport-$VERSION.zip.sha256" \
+            dist/release/appcast.xml
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest

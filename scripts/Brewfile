@@ -1,0 +1,3 @@
+# Optional reference tool for interactive DMG design; release/CI packaging uses
+# the checked-in native Finder template and requires no Homebrew packages.
+brew "create-dmg"

@@ -1,0 +1,10 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+.env
+client_secret*.json
+credentials*.json
+*.p12
+Resources/dmg/.author-*
+Resources/dmg/background*.png
