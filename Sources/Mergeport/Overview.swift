@@ -117,18 +117,19 @@ struct ChecksStatusBadge: View {
     }
 }
 
-/// A continuously turning arc that, unlike a mini ProgressView, takes the surrounding color.
+/// A turning arc that, unlike a mini ProgressView, takes the surrounding color. The angle is
+/// derived from the clock rather than a repeating animation, which would also animate layout
+/// changes (e.g. the header growing while a PR loads) and make the arc drift around.
 private struct RunningIndicator: View {
-    @State private var turning = false
-
     var body: some View {
-        Circle()
-            .trim(from: 0.15, to: 1)
-            .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
-            .frame(width: 11, height: 11)
-            .rotationEffect(.degrees(turning ? 360 : 0))
-            .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: turning)
-            .onAppear { turning = true }
+        TimelineView(.animation) { context in
+            let seconds = context.date.timeIntervalSinceReferenceDate
+            Circle()
+                .trim(from: 0.15, to: 1)
+                .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(seconds.truncatingRemainder(dividingBy: 1) * 360))
+        }
+        .frame(width: 11, height: 11)
     }
 }
 
