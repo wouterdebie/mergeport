@@ -244,6 +244,46 @@ struct GitHubClientTests {
     }
   }
 
+  @Test func repeatedWorkflowRunsShowOnlyTheNewestJob() async throws {
+    func run(_ id: Int, _ workflow: String, _ name: String, _ event: String, _ conclusion: String)
+      -> [String: Any]
+    {
+      [
+        "databaseId": id, "name": name, "status": "COMPLETED", "conclusion": conclusion,
+        "detailsUrl": NSNull(),
+        "checkSuite": ["workflowRun": ["event": event, "workflow": ["name": workflow]]],
+      ]
+    }
+    let http = session([
+      try Reply([
+        "data": [
+          "repository": [
+            "object": [
+              "statusCheckRollup": [
+                "contexts": [
+                  "pageInfo": ["hasNextPage": false, "endCursor": NSNull()],
+                  "nodes": [
+                    run(1, "Rust", "Rust", "pull_request", "FAILURE"),
+                    run(2, "React Slack", "Add reaction", "pull_request_review", "SKIPPED"),
+                    run(3, "Rust", "Rust", "pull_request", "SUCCESS"),
+                    run(4, "React Slack", "Add reaction", "pull_request_review", "SKIPPED"),
+                    run(5, "Rust", "Rust", "push", "SUCCESS"),
+                    ["id": "S1", "context": "deploy", "state": "SUCCESS", "targetUrl": NSNull()],
+                  ],
+                ]
+              ]
+            ]
+          ]
+        ]
+      ])
+    ])
+    defer { http.invalidateAndCancel() }
+    let checks = try await GitHubClient(token: "fixture-token", session: http).checks(
+      repository: "acme/app", sha: "abc")
+    #expect(checks.map(\.id) == ["check-3", "check-4", "check-5", "status-S1"])
+    #expect(checks.first?.state == "success")
+  }
+
   @Test func reviewThreadsArePaginatedBeforeClassifyingReadiness() async throws {
     let first = fixture(
       1,

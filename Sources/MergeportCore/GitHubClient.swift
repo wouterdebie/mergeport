@@ -1186,7 +1186,7 @@ extension GitHubClient {
     struct Repository: Decodable { let object: Commit? }
     struct Result: Decodable { let repository: Repository? }
     let parts = repository.split(separator: "/")
-    var checks: [PullRequestCheck] = []
+    var contexts_: [CheckContext] = []
     var cursor: String?
     repeat {
       var variables: [String: JSONValue] = [
@@ -1207,10 +1207,10 @@ extension GitHubClient {
         }
         """, variables: variables)
       guard let contexts = result.repository?.object?.statusCheckRollup?.contexts else { break }
-      checks += contexts.nodes.compactMap { $0?.model }
+      contexts_ += contexts.nodes.compactMap { $0 }
       cursor = try contexts.pageInfo.nextCursor()
     } while cursor != nil
-    return checks
+    return CheckContext.latest(contexts_)
   }
 
   /// Signature verification and the checks of every commit, for the commit rows' badges and popovers.
@@ -1240,7 +1240,7 @@ extension GitHubClient {
     for node in result.node?.commits?.nodes.compactMap({ $0 }) ?? [] {
       map[node.commit.oid] = (
         node.commit.signature?.isValid,
-        node.commit.statusCheckRollup?.contexts.nodes.compactMap { $0?.model } ?? []
+        CheckContext.latest(node.commit.statusCheckRollup?.contexts.nodes.compactMap { $0 } ?? [])
       )
     }
     return map
@@ -1274,6 +1274,30 @@ private struct CheckContext: Decodable {
   let targetUrl: URL?
   let description: String?
   let createdAt: Date?
+
+  /// A commit keeps every workflow run: each push, ready-for-review or review event adds another.
+  /// Like GitHub's merge box, show only the newest run of each job per workflow and event.
+  static func latest(_ contexts: [CheckContext]) -> [PullRequestCheck] {
+    var newest: [String: CheckContext] = [:]
+    var order: [String] = []
+    for context in contexts {
+      guard let name = context.name else {
+        let key = "status-\(context.context ?? context.id ?? "")"
+        if newest[key] == nil { order.append(key) }
+        newest[key] = context
+        continue
+      }
+      let run = context.checkSuite?.workflowRun
+      let key = "check-\(run?.workflow?.name ?? "")\u{1F}\(name)\u{1F}\(run?.event ?? "")"
+      if let existing = newest[key] {
+        if (context.databaseId ?? 0) > (existing.databaseId ?? 0) { newest[key] = context }
+      } else {
+        order.append(key)
+        newest[key] = context
+      }
+    }
+    return order.compactMap { newest[$0]?.model }
+  }
 
   var model: PullRequestCheck? {
     if let name {
