@@ -311,7 +311,12 @@ repository. PR lists, comments, reviews, thread replies, checks and file lists
 are paginated. Search exceeding GitHub's 1,000-result limit fails explicitly.
 GitHub's 3,000-file and 250-commit API limits are displayed if encountered.
 Missing/binary/truncated patches are clearly marked, with an external-browser
-fallback. Copilot history beyond the latest 100 reviews is marked unknown if
+fallback. In Files changed, expand hidden context above or below hunks in
+20-line chunks, or expand the whole gap between hunks. Content loads on demand
+from the reviewed head commit and is cached until the head commit or patch changes. Expanded
+lines are read-only context; inline comments remain anchored to the original
+patch. Binary, oversized and incomplete diffs retain the GitHub fallback.
+Copilot history beyond the latest 100 reviews is marked unknown if
 no Copilot review was found in that window.
 
 Existing pending reviews created elsewhere are displayed; finish those in your
@@ -410,6 +415,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 `--expect-bundled-client-id CLIENT_ID` additionally verifies build configuration.
 `--smoke-grouping` checks conflict-branch aliases and cross-repo ticket groups.
 `--smoke-file-tree` checks the changed-files tree and leaves Files changed in the capture.
+`--smoke-diff-context` with `--smoke-native-review` checks on-demand context
+expansion, rendered line numbers, comment anchors and same-commit refreshes.
 `--smoke-shortcuts` checks every sidebar shortcut, tab numbers, ⌘K and that no two
 menu items share a key equivalent.
 `--smoke-linear` checks the Linear loopback callback (state validation) and

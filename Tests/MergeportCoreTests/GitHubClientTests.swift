@@ -85,6 +85,42 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite(.serialized)
 struct GitHubClientTests {
+  @Test func contextFileTextUsesPinnedCommitAndGraphQLVariables() async throws {
+    let http = session([try Reply(["data": ["repository": [
+      "object": ["text": "hello\n", "isBinary": false]
+    ]]])])
+    defer { http.invalidateAndCancel() }
+    let text = try await GitHubClient(token: "fixture-token", session: http)
+      .fileText(repository: "owner/repo", path: "src/a b:é.swift", commit: "pinned-sha")
+    #expect(text == "hello\n")
+    let request = try #require(StubProtocol.state.requests.first)
+    let json = try JSONSerialization.jsonObject(with: try #require(request.httpBody))
+    let body = try #require(json as? [String: Any])
+    let variables = try #require(body["variables"] as? [String: Any])
+    #expect(variables["expression"] as? String == "pinned-sha:src/a b:é.swift")
+  }
+
+  @Test(arguments: [true, false])
+  func unavailableContextTextFailsExplicitly(binary: Bool) async throws {
+    let http = session([try Reply(["data": ["repository": [
+      "object": ["text": NSNull(), "isBinary": binary]
+    ]]])])
+    defer { http.invalidateAndCancel() }
+    await #expect(throws: MergeportError.self) {
+      try await GitHubClient(token: "fixture-token", session: http)
+        .fileText(repository: "owner/repo", path: "file", commit: "sha")
+    }
+  }
+
+  @Test func missingContextFileFailsExplicitly() async throws {
+    let http = session([try Reply(["data": ["repository": ["object": NSNull()]]])])
+    defer { http.invalidateAndCancel() }
+    await #expect(throws: MergeportError.self) {
+      try await GitHubClient(token: "fixture-token", session: http)
+        .fileText(repository: "owner/repo", path: "missing", commit: "sha")
+    }
+  }
+
   private func session(_ replies: [Reply]) -> URLSession {
     StubProtocol.state.install(replies)
     let configuration = URLSessionConfiguration.ephemeral

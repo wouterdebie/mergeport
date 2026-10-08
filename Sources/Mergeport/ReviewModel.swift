@@ -52,6 +52,10 @@ final class ReviewModel: ObservableObject {
     }
     @Published private(set) var isMerging = false
     private(set) var diffs: [String: FileDiff] = [:]
+    @Published private(set) var diffContexts: [String: DiffContext] = [:]
+    @Published private(set) var contextErrors: [String: String] = [:]
+    @Published private(set) var loadingContext: Set<String> = []
+    private var diffRevision = UUID()
     private var lastLoaded: Date?
     private var loadTask: Task<Void, Never>?
     var diffLayoutMeasurements: [String: CGFloat] = [:]
@@ -99,6 +103,8 @@ final class ReviewModel: ObservableObject {
                 fresh.pr.reviewRequested = fresh.pr.reviewRequested || queued.reviewRequested
             }
             var parsed: [String: FileDiff] = [:]
+            var contexts: [String: DiffContext] = [:]
+            var contextErrors: [String: String] = [:]
             for file in fresh.files {
                 guard let patch = file.patch, !patch.isEmpty else {
                     parsed[file.filename] = .unavailable("GitHub provided no text patch for this file (binary, unchanged content, or a diff-size limit). Open GitHub for the full file.")
@@ -106,10 +112,28 @@ final class ReviewModel: ObservableObject {
                 }
                 do {
                     let diff = try UnifiedDiff.parse(patch)
-                    parsed[file.filename] = .available(diff, complete: diff.additions == file.additions && diff.deletions == file.deletions)
+                    let complete = diff.additions == file.additions && diff.deletions == file.deletions
+                    parsed[file.filename] = .available(diff, complete: complete)
+                    if complete, file.status != "removed", file.status != "added" {
+                        do {
+                            if details?.headSHA == fresh.headSHA,
+                               let previous = details?.files.first(where: { $0.filename == file.filename }),
+                               previous == file, let existing = diffContexts[file.filename] {
+                                contexts[file.filename] = existing
+                            } else {
+                                contexts[file.filename] = try DiffContext(diff: diff)
+                            }
+                        } catch {
+                            contextErrors[file.filename] = error.localizedDescription
+                        }
+                    }
                 } catch { parsed[file.filename] = .unavailable(error.localizedDescription) }
             }
             diffs = parsed
+            diffRevision = UUID()
+            diffContexts = contexts
+            self.contextErrors = contextErrors
+            loadingContext = []
             details = fresh
             lastLoaded = .now
             if !fresh.files.contains(where: { $0.filename == selectedFile }) { selectedFile = FileTree.orderedFilenames(fresh.files).first }
@@ -127,6 +151,35 @@ final class ReviewModel: ObservableObject {
     var hasRunningChecks: Bool {
         guard let details else { return false }
         return details.checkSummary.pending > 0
+    }
+
+    func expandContext(path: String, gap: Int, direction: ContextDirection) async {
+        guard let app, let details, var context = diffContexts[path],
+              !loadingContext.contains(path) else { return }
+        let revision = diffRevision
+        let generation = app.accountSessionID
+        loadingContext.insert(path)
+        defer { if revision == diffRevision { loadingContext.remove(path) } }
+        do {
+            if !context.hasSource {
+                let text: String
+                if isDemo { text = try DemoReview.fileText(path: path) }
+                else {
+                    text = try await app.githubClient().fileText(
+                        repository: reference.repository, path: path, commit: details.headSHA)
+                }
+                try Task.checkCancellation()
+                try context.loadSource(text)
+            }
+            guard revision == diffRevision, generation == app.accountSessionID else { return }
+            try context.expand(gap: gap, direction: direction)
+            diffContexts[path] = context
+        } catch is CancellationError {
+            return
+        } catch {
+            guard revision == diffRevision, generation == app.accountSessionID else { return }
+            report(error)
+        }
     }
 
     /// Re-reads the head commit's checks so running tests update without reloading the whole PR.

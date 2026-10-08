@@ -607,6 +607,35 @@ private struct PRNode: Decodable {
 }
 
 extension GitHubClient {
+  public func fileText(repository: String, path: String, commit: String) async throws -> String {
+    let name = try RepositoryName.validate(repository)
+    guard !path.isEmpty, !commit.isEmpty else {
+      throw MergeportError.message("A file path and commit are required to load context.")
+    }
+    struct Blob: Decodable, Sendable { let text: String?; let isBinary: Bool }
+    struct Repo: Decodable, Sendable { let object: Blob? }
+    struct Result: Decodable, Sendable { let repository: Repo? }
+    let parts = name.split(separator: "/")
+    let result: Result = try await query(
+      """
+      query($owner: String!, $name: String!, $expression: String!) {
+        repository(owner: $owner, name: $name) {
+          object(expression: $expression) { ... on Blob { text isBinary } }
+        }
+      }
+      """, variables: [
+        "owner": .string(String(parts[0])), "name": .string(String(parts[1])),
+        "expression": .string("\(commit):\(path)")
+      ])
+    guard let blob = result.repository?.object else {
+      throw MergeportError.message("GitHub could not find this file at the reviewed commit.")
+    }
+    guard !blob.isBinary, let text = blob.text else {
+      throw MergeportError.message("GitHub cannot return text context for this binary or oversized file. Open the file on GitHub.")
+    }
+    return text
+  }
+
   public func reviewDetails(repository: String, number: Int) async throws -> ReviewDetails {
     let name = try RepositoryName.validate(repository)
     guard number > 0 else { throw MergeportError.message("Invalid PR number.") }

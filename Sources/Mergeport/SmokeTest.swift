@@ -204,6 +204,7 @@ enum SmokeTest {
           throw MergeportError.message("No review fixture.")
         }
         model.open(pr)
+        try await Task.sleep(for: .milliseconds(200))
         guard let tab = model.activeTab else {
           throw MergeportError.message("Native review tab did not open.")
         }
@@ -217,6 +218,42 @@ enum SmokeTest {
           throw MergeportError.message("The native file diff did not load with valid line anchors.")
         }
         review.selectSection(.files)
+        if args.contains("--smoke-diff-context") {
+          guard let initial = review.diffContexts[file.filename], !initial.hasSource else {
+            throw MergeportError.message("Diff context must load on demand.")
+          }
+          await review.expandContext(path: file.filename, gap: 1, direction: .down)
+          guard let expanded = review.diffContexts[file.filename], expanded.hasSource else {
+            throw MergeportError.message("Diff context failed to load.")
+          }
+          let extra = expanded.rows.compactMap { row -> DiffLine? in
+            if case .line(let line) = row, !line.isCommentable { return line }
+            return nil
+          }
+          guard extra.first?.newLine == 5, extra.first?.oldLine == 4,
+            extra.count == 5, extra.allSatisfy({ $0.anchor(path: file.filename) == nil }),
+            diff.lines.first(where: { $0.kind == .addition })?.anchor(path: file.filename) == anchor
+          else { throw MergeportError.message("Expanded context changed line numbers or review anchors.") }
+          try await Task.sleep(for: .milliseconds(400))
+          guard review.diffContexts[file.filename]?.hasSource == true,
+            review.diffLayoutMeasurements["row--5"] != nil
+          else {
+            throw MergeportError.message(
+              "Expanded context did not reach the rendered diff: source=\(review.diffContexts[file.filename]?.hasSource == true), section=\(review.section), active=\(model.activeTab?.id == tab.id), metrics=\(review.diffLayoutMeasurements).")
+          }
+          if let content = window.contentView,
+            let bitmap = content.bitmapImageRepForCachingDisplay(in: content.bounds)
+          {
+            content.cacheDisplay(in: content.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(
+              to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-context.png")))
+          }
+          await review.load(force: true)
+          guard review.diffContexts[file.filename]?.hasSource == true else {
+            throw MergeportError.message("Refreshing the same commit discarded expanded context.")
+          }
+          print("PASS: diff context loads on demand and renders unchanged lines without changing comment anchors.")
+        }
         try review.addComment(anchor: anchor, body: "Local fixture comment")
         review.draft.discussion = "Local fixture discussion draft"
         model.selectTab(nil)

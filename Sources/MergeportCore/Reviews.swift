@@ -652,10 +652,11 @@ public struct DiffLine: Identifiable, Sendable {
   public let newLine: Int?
   public let highlights: [Range<Int>]
   public let coarseHighlights: Bool
+  public let isCommentable: Bool
 
   public init(
     id: Int, kind: DiffLineKind, text: String, oldLine: Int?, newLine: Int?,
-    highlights: [Range<Int>] = [], coarseHighlights: Bool = false
+    highlights: [Range<Int>] = [], coarseHighlights: Bool = false, isCommentable: Bool = true
   ) {
     self.id = id
     self.kind = kind
@@ -664,8 +665,10 @@ public struct DiffLine: Identifiable, Sendable {
     self.newLine = newLine
     self.highlights = highlights
     self.coarseHighlights = coarseHighlights
+    self.isCommentable = isCommentable
   }
   public func anchor(path: String) -> DiffAnchor? {
+    guard isCommentable else { return nil }
     if kind == .deletion, let oldLine { return DiffAnchor(path: path, line: oldLine, side: .left) }
     if let newLine { return DiffAnchor(path: path, line: newLine, side: .right) }
     return nil
@@ -819,6 +822,31 @@ public struct IntralineChange: Sendable {
 }
 
 public enum DemoReview {
+  public static func fileText(path: String) throws -> String {
+    switch path {
+    case "services/routing/src/routing.ts":
+      """
+      export function route(host: string): string {
+        const tenant = host.trim().toLowerCase().split(".")[0];
+        return tenant || "default";
+      }
+
+      // Other routing helpers are unchanged.
+      export function isDefaultTenant(host: string): boolean {
+        return route(host) === "default";
+      }
+      """
+    case "services/routing/tests/routing.test.ts":
+      """
+      test("routes a tenant hostname", () => {
+        expect(route("ACME.example.com")).toBe("acme");
+      });
+      """
+    default:
+      throw MergeportError.message("No demo file content is available for \(path).")
+    }
+  }
+
   private static let demoChecks = [
     PullRequestCheck(
       id: "sample-slack", name: "Post review request", state: "skipped", url: nil,

@@ -234,6 +234,9 @@ struct NativeReviewView: View {
           Divider()
           switch review.diffs[file.filename] {
           case .available(let diff, let complete):
+            if let error = review.contextErrors[file.filename] {
+              message("Context expansion unavailable: \(error)", color: .orange)
+            }
             if !complete {
               message(
                 "GitHub's patch is incomplete. Open GitHub for the entire file before approving.",
@@ -246,7 +249,16 @@ struct NativeReviewView: View {
             GeometryReader { viewport in
               ScrollView([.vertical, .horizontal]) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                  ForEach(diff.lines) { line in diffRow(line, path: file.filename) }
+                  if let context = review.diffContexts[file.filename] {
+                    ForEach(context.rows) { row in
+                      switch row {
+                      case .line(let line): diffRow(line, path: file.filename)
+                      case .gap(let gap): contextGap(gap, path: file.filename)
+                      }
+                    }
+                  } else {
+                    ForEach(diff.lines) { line in diffRow(line, path: file.filename) }
+                  }
                 }.frame(minWidth: viewport.size.width, alignment: .leading).padding(.vertical, 6)
               }
               .background {
@@ -281,6 +293,36 @@ struct NativeReviewView: View {
     }
   }
 
+  private func contextGap(_ gap: DiffContextGap, path: String) -> some View {
+    HStack(spacing: 12) {
+      if review.loadingContext.contains(path) {
+        ProgressView().controlSize(.small)
+      } else {
+        if gap.canExpandUp {
+          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .up) } } label: {
+            Label("Expand up", systemImage: "arrow.up")
+          }.help("Show up to 20 lines above the next hunk")
+        }
+        if gap.canExpandDown {
+          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .down) } } label: {
+            Label("Expand down", systemImage: "arrow.down")
+          }.help("Show up to 20 lines below the previous hunk")
+        }
+        if gap.canExpandUp && gap.canExpandDown {
+          Button("Expand all") {
+            Task { await review.expandContext(path: path, gap: gap.id, direction: .all) }
+          }
+        }
+      }
+      Text(gap.count.map { "\($0) hidden lines" } ?? "More context")
+        .foregroundStyle(.secondary)
+      Spacer(minLength: 0)
+    }
+    .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.blue.opacity(0.08))
+  }
+
   private func diffRow(_ line: DiffLine, path: String) -> some View {
     HStack(alignment: .top, spacing: 0) {
       Button {
@@ -290,6 +332,7 @@ struct NativeReviewView: View {
           Text(line.oldLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
           Text(line.newLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
           Image(systemName: "plus.bubble").font(.system(size: 9)).frame(width: 24)
+            .opacity(line.anchor(path: path) == nil ? 0 : 1)
         }.foregroundStyle(.secondary).padding(.trailing, 8)
           .frame(maxHeight: .infinity).background(DiffColors.gutter(line.kind))
       }.buttonStyle(.plain).disabled(
