@@ -299,9 +299,12 @@ checks or unresolved threads need attention. Unresolved threads started by
 Copilot are shown as findings but don't block Ready to merge; if the repository
 requires resolved conversations, GitHub's own verdict still holds the PR back.
 
-Ready to merge requires GitHub's `CLEAN` policy verdict, known mergeability,
-passing/no checks and approved/not-required reviews. An approval alone is not
-enough. Merge requests include the exact loaded head SHA; GitHub rejects a
+Merge eligibility requires GitHub's `CLEAN` or `UNSTABLE` policy verdict, known
+mergeability and approved/not-required reviews. `UNSTABLE` means GitHub allows
+merging despite non-passing optional checks; `BLOCKED` still prevents merging,
+including when mandatory approvals or required checks are missing. Failed
+checks remain prominent in Needs attention and the checks list even when Merge
+is enabled. An approval alone is not enough. Merge requests include the exact loaded head SHA; GitHub rejects a
 changed head or unmet policies. Review submission also checks the current head
 and includes the reviewed commit ID. A failed network submission is not retried
 automatically: check GitHub before retrying if the outcome is uncertain.
@@ -417,6 +420,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 `--smoke-file-tree` checks the changed-files tree and leaves Files changed in the capture.
 `--smoke-diff-context` with `--smoke-native-review` checks on-demand context
 expansion, rendered line numbers, comment anchors and same-commit refreshes.
+`--smoke-merge-policy` with `--smoke-native-review` checks optional-failure
+warnings alongside merge eligibility, and mandatory approval and policy blocks.
 `--smoke-shortcuts` checks every sidebar shortcut, tab numbers, ⌘K and that no two
 menu items share a key equivalent.
 `--smoke-linear` checks the Linear loopback callback (state validation) and

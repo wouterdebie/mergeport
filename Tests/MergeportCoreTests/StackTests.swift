@@ -65,7 +65,8 @@ struct StackTests {
 
   @Test func failingChecksAndRebaseBelowHoldUpTheStack() {
     let failing = PRStack(
-      number: 4, base: "main", size: 2, position: 2, entries: [entry(1, checks: .failure), entry(2)])
+      number: 4, base: "main", size: 2, position: 2,
+      entries: [entry(1, merge: "BLOCKED", checks: .failure), entry(2)])
     #expect(failing.blocker?.problem == "Checks failing")
     let behind = PRStack(
       number: 4, base: "main", size: 2, position: 2, entries: [entry(1, merge: "BEHIND"), entry(2)])
@@ -73,6 +74,22 @@ struct StackTests {
     #expect(behind.blocker?.statusLabel == "Needs rebase")
     let ready = PRStack(number: 4, base: "main", size: 2, position: 2, entries: [entry(1), entry(2)])
     #expect(ready.readinessLabel == "All 2 ready")
+  }
+
+  @Test func optionalChecksBelowDoNotBlockStackButRemainVisible() {
+    let failing = entry(1, merge: "UNSTABLE", checks: .failure)
+    #expect(!failing.holdsUpStack)
+    #expect(failing.statusLabel == "Optional checks failing")
+    let pending = entry(2, merge: "CLEAN", checks: .pending)
+    #expect(!pending.holdsUpStack)
+    #expect(pending.statusLabel == "Optional checks running")
+    let stack = PRStack(
+      number: 4, base: "main", size: 3, position: 3, entries: [failing, pending, entry(3)])
+    #expect(stack.blocker == nil)
+    #expect(pr(stack).isMergeReady)
+    #expect(stack.readinessLabel == "All 3 ready")
+    let required = entry(1, decision: "REVIEW_REQUIRED", merge: "UNSTABLE", checks: .failure)
+    #expect(required.holdsUpStack)
   }
 
   @Test func decodesEntriesSavedBeforeReadinessFields() throws {

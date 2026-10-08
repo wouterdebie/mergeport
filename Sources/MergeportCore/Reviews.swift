@@ -437,7 +437,7 @@ public struct ReviewDetails: Sendable {
     }
     return states
   }
-  public var canMerge: Bool { canWrite && pr.stage == .ready && !mergeMethods.isEmpty }
+  public var canMerge: Bool { canWrite && pr.isMergeReady && !mergeMethods.isEmpty }
   public var hasPendingGitHubReview: Bool {
     reviews.contains {
       $0.state == "PENDING" && $0.author.caseInsensitiveCompare(viewer.login) == .orderedSame

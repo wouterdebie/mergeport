@@ -142,19 +142,25 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     /// Copilot findings are suggestions: they're shown, but don't hold a PR back from merging.
     public var blockingUnresolved: Int { unresolvedThreads - copilotUnresolved }
 
+    /// GitHub distinguishes optional check failures (UNSTABLE) from unmet rules (BLOCKED).
+    public static func policyAllowsMerge(_ state: String) -> Bool {
+        state == "CLEAN" || state == "UNSTABLE"
+    }
+
+    public var isMergeReady: Bool {
+        state == "OPEN" && !isDraft && mergeable == "MERGEABLE"
+            && Self.policyAllowsMerge(mergeState)
+            && (reviewDecision == nil || reviewDecision == "APPROVED")
+            && blockingUnresolved == 0 && stack?.blocker == nil
+    }
+
     public var stage: WorkflowStage {
         if state != "OPEN" { return .waiting }
         if isDraft { return .draft }
         if needsMyReview { return .review }
         if checks == .failure || reviewDecision == "CHANGES_REQUESTED"
             || mergeable == "CONFLICTING" || blockingUnresolved > 0 { return .attention }
-        // CLEAN is GitHub's aggregate policy verdict, not an inference from approval alone.
-        if mergeable == "MERGEABLE", mergeState == "CLEAN",
-           checks == .success || checks == .none,
-           reviewDecision == nil || reviewDecision == "APPROVED" {
-            // Merging a stacked PR also merges the open PRs below it, so they must be ready too.
-            if stack?.blocker == nil { return .ready }
-        }
+        if isMergeReady { return .ready }
         // A stack only lands once every layer is approved; catch unrequested reviews early.
         if stack?.needingReviewer.isEmpty == false { return .attention }
         return .waiting
@@ -171,9 +177,13 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
                 ? "\(layers[0].displayNumber) in the stack has no reviewer"
                 : "\(PRStack.list(layers.map(\.number))) in the stack have no reviewer"
         }
-        if checks == .failure { return checks.title }
+        if checks == .failure {
+            return isMergeReady ? "Checks failing; GitHub allows merging" : checks.title
+        }
         if reviewDecision == "REVIEW_REQUIRED" { return "Waiting for approval" }
-        if checks == .pending || checks == .unknown { return checks.title }
+        if checks == .pending || checks == .unknown {
+            return isMergeReady ? "\(checks.title); GitHub allows merging" : checks.title
+        }
         if let blocker = stack?.blocker, let problem = blocker.problem {
             return "Waiting on \(blocker.displayNumber) below: \(problem.lowercased())"
         }
@@ -181,7 +191,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         switch mergeState {
         case "BEHIND": return "Branch needs updating"
         case "BLOCKED": return "Blocked by repository rules"
-        case "UNSTABLE": return "Some checks are not successful"
+        case "UNSTABLE": return isMergeReady
+            ? "Some checks are not successful; GitHub allows merging" : "Some checks are not successful"
         case "HAS_HOOKS": return "Merge hooks pending"
         case "UNKNOWN": return "GitHub is calculating mergeability"
         default: return stage == .ready ? "GitHub reports merge-ready" : "Waiting on GitHub"

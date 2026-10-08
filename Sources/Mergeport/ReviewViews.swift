@@ -894,7 +894,7 @@ struct NativeReviewView: View {
     let approvals = states.filter { $0 == "APPROVED" }.count
     let changes = states.filter { $0 == "CHANGES_REQUESTED" }.count
     let summary = details.checkSummary
-    let ready = review.pr.stage == .ready && details.canMerge
+    let ready = details.canMerge
     return HStack(alignment: .top, spacing: 14) {
       Image(systemName: "arrow.triangle.merge").font(.system(size: 15, weight: .semibold))
         .foregroundStyle(.white).frame(width: 32, height: 32)
@@ -903,16 +903,20 @@ struct NativeReviewView: View {
       VStack(alignment: .leading, spacing: 0) {
         mergeSection(
           status: review.pr.reviewDecision == "APPROVED"
-            ? .success : review.pr.reviewDecision == "CHANGES_REQUESTED" ? .failure : .waiting,
+            ? .success : review.pr.reviewDecision == "CHANGES_REQUESTED" ? .failure
+              : review.pr.reviewDecision == nil ? .neutral : .waiting,
           title: review.pr.reviewDecision == "APPROVED"
             ? "Changes approved"
             : review.pr.reviewDecision == "CHANGES_REQUESTED"
-              ? "Changes requested" : "Review required",
+              ? "Changes requested"
+              : review.pr.reviewDecision == nil ? "No approval required" : "Review required",
           detail: [
             approvals > 0 ? "\(approvals) approving review\(approvals == 1 ? "" : "s")" : nil,
             changes > 0 ? "\(changes) requesting changes" : nil,
           ].compactMap { $0 }.joined(separator: ", ").nonEmpty
-            ?? "At least one approving review may be required to merge.")
+            ?? (review.pr.reviewDecision == nil
+              ? "GitHub does not require an approving review for this PR."
+              : "At least one approving review may be required to merge."))
         Divider()
         Button {
           withAnimation(.easeInOut(duration: 0.15)) { checksExpanded.toggle() }
@@ -921,7 +925,9 @@ struct NativeReviewView: View {
             status: summary.failed > 0
               ? .failure
               : summary.pending > 0 ? .pending : summary.total == 0 ? .neutral : .success,
-            title: summary.title, detail: summary.detail,
+            title: summary.title,
+            detail: summary.detail + (review.pr.isMergeReady && (summary.failed > 0 || summary.pending > 0)
+              ? ". These checks do not block merging under GitHub's current rules." : ""),
             chevron: summary.total > 0, expanded: checksExpanded)
         }.buttonStyle(.plain).disabled(summary.total == 0)
         if checksExpanded && summary.total > 0 {
@@ -2301,6 +2307,12 @@ struct StackMap: View {
     default: break
     }
     if entry.isDraft { return ("pencil.circle", .secondary) }
+    if entry.problem == nil && entry.checks == .failure {
+      return ("exclamationmark.circle.fill", .red)
+    }
+    if entry.problem == nil && entry.checks == .pending {
+      return ("clock", YardPalette.blue)
+    }
     switch entry.problem {
     case nil: return ("checkmark.circle.fill", .green)
     case "Merge conflicts", "Changes requested", "Checks failing": return ("exclamationmark.circle.fill", .red)

@@ -286,6 +286,47 @@ enum SmokeTest {
           "PASS: every rendered diff row fills the \(viewport)-point viewport; intraline spans are present."
         )
         print("PASS: native diff, line anchors, retained review drafts and close-tab confirmation.")
+        if args.contains("--smoke-merge-policy"), let original = review.details {
+          var optional = original
+          optional.pr.isDraft = false
+          optional.pr.reviewDecision = nil
+          optional.pr.reviewRequested = false
+          optional.pr.mergeable = "MERGEABLE"
+          optional.pr.mergeState = "UNSTABLE"
+          optional.pr.checks = .failure
+          optional.pr.unresolvedThreads = 0
+          optional.pr.stack = nil
+          optional.checks = [
+            PullRequestCheck(id: "optional-tests", name: "Run Tests", state: "failure", url: nil),
+            PullRequestCheck(id: "optional-slack", name: "Slack reaction", state: "action_required", url: nil),
+          ]
+          review.details = optional
+          review.selectSection(.conversation)
+          guard review.details?.canMerge == true, review.pr.stage == .attention,
+            review.details?.checkSummary.failed == 2,
+            review.pr.waitingReason.contains("GitHub allows merging")
+          else { throw MergeportError.message("Optional failures hid warnings or disabled Merge.") }
+          try await Task.sleep(for: .milliseconds(500))
+          if let view = window.contentView,
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+          {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(
+              to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-merge-policy.png")))
+          }
+          review.details?.pr.reviewDecision = "REVIEW_REQUIRED"
+          guard review.details?.canMerge == false else {
+            throw MergeportError.message("Mandatory approval did not disable Merge.")
+          }
+          review.details?.pr.reviewDecision = nil
+          review.details?.pr.mergeState = "BLOCKED"
+          guard review.details?.canMerge == false else {
+            throw MergeportError.message("GitHub's merge block did not disable Merge.")
+          }
+          review.details = original
+          review.selectSection(.files)
+          print("PASS: optional failures stay visible without disabling Merge; required approval and GitHub blocks still disable it.")
+        }
         try closeTabUsingShortcut(window: window)
         try await Task.sleep(for: .milliseconds(100))
         guard !model.tabs.contains(where: { $0.id == tab.id }), window.isVisible else {

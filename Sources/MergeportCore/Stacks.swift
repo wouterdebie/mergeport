@@ -81,10 +81,10 @@ public struct PRStack: Codable, Hashable, Sendable {
       if isDraft { return "Draft" }
       if mergeState == "DIRTY" { return "Merge conflicts" }
       if reviewDecision == "CHANGES_REQUESTED" { return "Changes requested" }
-      if checks == .failure { return "Checks failing" }
+      if checks == .failure && !PullRequest.policyAllowsMerge(mergeState) { return "Checks failing" }
       if needsReviewer { return "No reviewer" }
       if reviewDecision == "REVIEW_REQUIRED" { return "Needs review" }
-      if checks == .pending { return "Checks running" }
+      if checks == .pending && !PullRequest.policyAllowsMerge(mergeState) { return "Checks running" }
       if needsRebase { return "Needs rebase" }
       if mergeState == "BLOCKED" { return "Blocked" }
       return nil
@@ -95,7 +95,11 @@ public struct PRStack: Codable, Hashable, Sendable {
       switch state {
       case "MERGED": return "Merged"
       case "CLOSED": return "Closed"
-      default: return problem ?? (reviewDecision == "APPROVED" ? "Approved" : "Ready")
+      default:
+        if let problem { return problem }
+        if checks == .failure { return "Optional checks failing" }
+        if checks == .pending { return "Optional checks running" }
+        return reviewDecision == "APPROVED" ? "Approved" : "Ready"
       }
     }
 

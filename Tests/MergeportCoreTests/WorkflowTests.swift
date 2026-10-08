@@ -49,7 +49,7 @@ struct WorkflowTests {
         #expect(!InboxScope.review.includes(value, login: "you"))
     }
 
-    @Test(arguments: ["BLOCKED", "BEHIND", "UNKNOWN", "UNSTABLE", "HAS_HOOKS", "NEW_FUTURE_STATE"])
+    @Test(arguments: ["BLOCKED", "BEHIND", "UNKNOWN", "HAS_HOOKS", "NEW_FUTURE_STATE"])
     func approvalDoesNotBypassGitHubMergePolicy(_ state: String) {
         var value = pr()
         value.reviewDecision = "APPROVED"
@@ -63,9 +63,9 @@ struct WorkflowTests {
         value.checks = .none
         #expect(value.stage == .ready)
         value.checks = .unknown
-        #expect(value.stage == .waiting)
+        #expect(value.stage == .ready)
         value.checks = .pending
-        #expect(value.stage == .waiting)
+        #expect(value.stage == .ready)
         value.checks = .success
         value.mergeable = "UNKNOWN"
         #expect(value.stage == .waiting)
@@ -73,6 +73,54 @@ struct WorkflowTests {
         value.reviewDecision = "REVIEW_REQUIRED"
         #expect(value.stage == .waiting)
         #expect(value.waitingReason == "Waiting for approval")
+    }
+
+    @Test(arguments: ["CLEAN", "UNSTABLE"])
+    func optionalCheckFailuresStayVisibleWithoutDisablingMerge(_ state: String) {
+        var value = pr()
+        value.mergeState = state
+        value.checks = .failure
+        #expect(value.isMergeReady)
+        #expect(value.stage == .attention)
+        #expect(value.waitingReason == "Checks failing; GitHub allows merging")
+        var details = DemoReview.details(for: value)
+        #expect(details.canMerge)
+        details.pr.mergeState = "BLOCKED"
+        #expect(!details.canMerge)
+        #expect(details.pr.stage == .attention)
+    }
+
+    @Test(arguments: [CheckState.failure, .pending, .unknown, .success])
+    func requiredApprovalsAndGitHubBlocksCannotBeBypassed(_ checks: CheckState) {
+        var value = pr()
+        value.checks = checks
+        value.mergeState = "UNSTABLE"
+        value.reviewDecision = "REVIEW_REQUIRED"
+        #expect(!value.isMergeReady)
+        value.reviewDecision = "CHANGES_REQUESTED"
+        #expect(!value.isMergeReady)
+        value.reviewDecision = "APPROVED"
+        value.mergeState = "BLOCKED"
+        #expect(!value.isMergeReady)
+        value.mergeState = "UNKNOWN"
+        #expect(!value.isMergeReady)
+        value.mergeState = "UNSTABLE"
+        value.mergeable = "CONFLICTING"
+        #expect(!value.isMergeReady)
+    }
+
+    @Test func optionalPendingChecksDoNotBlockButDraftsAndThreadsStillDo() {
+        var value = pr()
+        value.checks = .pending
+        value.mergeState = "UNSTABLE"
+        #expect(value.isMergeReady)
+        #expect(value.stage == .ready)
+        #expect(value.waitingReason.contains("Checks running"))
+        value.isDraft = true
+        #expect(!value.isMergeReady)
+        value.isDraft = false
+        value.unresolvedThreads = 1
+        #expect(!value.isMergeReady)
     }
 
     @Test(arguments: ["MERGED", "CLOSED"])
