@@ -39,8 +39,8 @@ enum YardPalette {
 struct YardMark: View {
     var size: CGFloat = 34
     var body: some View {
-        Image(systemName: "arrow.triangle.pull")
-            .font(.system(size: size * 0.52, weight: .bold))
+        Image(nsImage: MergeportLogo.template(height: size * 0.66))
+            .renderingMode(.template)
             .foregroundStyle(YardPalette.gradient)
             .frame(width: size, height: size)
             .background(Color(red: 0.04, green: 0.06, blue: 0.13), in: RoundedRectangle(cornerRadius: size * 0.25))
@@ -408,6 +408,7 @@ struct MainWindow: View {
             model.mainWindowActive = scenePhase == .active
             let open = openWindow
             model.openMainWindow = { open(id: "main") }
+            model.openSettingsWindow = { openSettings() }
         }
         .onDisappear { model.mainWindowActive = false }
         .onChange(of: model.selectedTab) { _, newValue in

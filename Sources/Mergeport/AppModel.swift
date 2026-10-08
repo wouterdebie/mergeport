@@ -87,6 +87,7 @@ final class AppModel: ObservableObject {
     var mainWindowActive = false
     /// Set by the main window so AppKit code (status panel, menu bar) can reopen it after it was closed.
     var openMainWindow: (() -> Void)?
+    var openSettingsWindow: (() -> Void)?
     private var autoRefreshTask: Task<Void, Never>?
     @Published var isConnected = false
     @Published var isRefreshing = false

@@ -143,7 +143,8 @@ final class StatusPanelController: NSObject, NSWindowDelegate, NSMenuDelegate {
         item.button?.action = #selector(statusItemClicked(_:))
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         item.button?.font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        item.button?.image = NSImage(systemSymbolName: "arrow.triangle.pull", accessibilityDescription: "Mergeport")
+        item.button?.image = MergeportLogo.template(height: 16)
+        item.button?.imagePosition = .imageLeading
         statusItem = item
         return item
     }
@@ -182,9 +183,17 @@ final class StatusPanelController: NSObject, NSWindowDelegate, NSMenuDelegate {
     @objc private func refreshNow() { Task { await model.refresh() } }
     @objc private func markAllSeen() { model.markAllSeen() }
     @objc private func quit() { NSApp.terminate(nil) }
-    @objc private func openSettings() {
+    @objc func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        // macOS 14 ignores showSettingsWindow:, so trigger SwiftUI's own app-menu item.
+        if let appMenu = NSApp.mainMenu?.items.first?.submenu,
+           let index = appMenu.items.firstIndex(where: {
+               $0.keyEquivalent == "," && $0.keyEquivalentModifierMask == .command
+           }) {
+            appMenu.performActionForItem(at: index)
+        } else {
+            model.openSettingsWindow?()
+        }
     }
 }
 

@@ -468,6 +468,21 @@ enum SmokeTest {
         try await Task.sleep(for: .milliseconds(200))
         guard !panel.isVisible else { throw MergeportError.message("The status panel did not hide.") }
         model.showStatusPanel = wasShowing
+        let windowsBefore = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
+        StatusPanelController.shared.openSettings()
+        try await Task.sleep(for: .milliseconds(800))
+        guard let settings = NSApp.windows.first(where: {
+          $0.isVisible && !windowsBefore.contains(ObjectIdentifier($0)) && !($0 is NSPanel)
+        }) else {
+          throw MergeportError.message("The menu bar Settings… item did not open Settings.")
+        }
+        settings.close()
+        let logo = MergeportLogo.template(height: 64)
+        if let tiff = logo.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+          let png = rep.representation(using: .png, properties: [:])
+        {
+          try png.write(to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-logo.png")))
+        }
         print("PASS: Status panel floats on every Space, highlights updates and opening a PR marks it seen.")
       }
       guard let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
