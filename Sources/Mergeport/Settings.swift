@@ -251,6 +251,17 @@ struct SettingsView: View {
                         .font(.callout).foregroundStyle(.secondary)
                     Link("Manage authorized OAuth apps", destination: URL(string: "https://github.com/settings/applications")!)
                 }
+                Section("Status panel") {
+                    Toggle("Show the status panel (⌥⌘P)", isOn: $model.showStatusPanel)
+                    Text("A small always-on-top panel with your pull requests by lane, visible on every Space. Updates since you last opened a PR are highlighted. Click a PR to open it here, ⌥-click to open it on GitHub.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Show in the menu bar", isOn: $model.showMenuBarItem)
+                    Text("Shows how many PRs need you: requested reviews, and your PRs that need attention or are ready to merge. Click to toggle the panel; right-click for more.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Toggle("Toggle the panel from anywhere with ⌃⌥⌘P", isOn: $model.panelHotKey)
+                    Toggle("Fade the panel when the pointer isn't over it", isOn: $model.panelFadesWhenIdle)
+                    Toggle("Hide the panel while Mergeport is in front", isOn: $model.panelHidesWithApp)
+                }
             }.formStyle(.grouped).tabItem { Label("General", systemImage: "gearshape") }.tag(SettingsTab.general)
             RepositorySettings().padding(22).tabItem { Label("Repositories", systemImage: "shippingbox") }
                 .tag(SettingsTab.repositories)

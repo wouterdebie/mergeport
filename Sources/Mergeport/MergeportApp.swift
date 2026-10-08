@@ -38,6 +38,9 @@ private struct PullRequestCommands: Commands {
             Button(model.tabLayout == .sidebar ? "Show Tabs in Top Bar" : "Show Tabs in Sidebar") {
                 model.tabLayout = model.tabLayout == .sidebar ? .topBar : .sidebar
             }
+            Button(model.showStatusPanel ? "Hide Status Panel" : "Show Status Panel") {
+                model.showStatusPanel.toggle()
+            }.keyboardShortcut("p", modifiers: [.command, .option])
             Divider()
         }
         CommandMenu("Go") {
@@ -87,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppUpdates.shared.start()
+        StatusPanelController.shared.start()
         navigationMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .otherMouseDown]) { event in
             Self.navigate(event) ? nil : event
         }

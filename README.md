@@ -120,6 +120,18 @@ indicator. Cached reviews are kept in memory for the current app session.
   or paused state, rather than a running age timer.
   Errors are visible; failed reads retain last-known data rather than showing
   an empty inbox.
+- **Status panel**: an optional always-on-top panel (View → Show Status
+  Panel, ⌥⌘P) lists your PRs and review requests by lane: your review, needs
+  attention, ready to merge, waiting and draft. It stays visible on every
+  Space and over full-screen apps, and never takes focus. Since your last
+  look, new updates are highlighted: review requested, approved, changes
+  requested, conflicts, failed checks, ready to merge, Copilot finished, new
+  threads. Click a row to open it in Mergeport; ⌥-click opens it on GitHub.
+  A menu bar item shows how many PRs need you and toggles the panel;
+  right-click it for more options. Settings → General → Status panel offers a
+  filter, a global ⌃⌥⌘P hotkey, fading while idle and hiding while Mergeport
+  is in front. While the panel is visible, polling continues after the main
+  window is closed or in the background.
 - **Preview**: sample inbox and interactive native review drafts without any
   GitHub requests or writes.
 
@@ -326,6 +338,8 @@ Hold **Command** to see shortcut hints next to sidebar items and tabs
 | ⌘F | Search |
 | ⇧⌘R / ⌘R | Refresh overview / reload current view |
 | ⌘W | Close the active review tab (confirms unsent drafts; no action on Overview) |
+| ⌥⌘P | Show / hide the status panel |
+| ⌃⌥⌘P | Show / hide the status panel from any app (opt-in global hotkey) |
 | ⌘← / ⌘→ or ⌘[ / ⌘] | Back / forward (also the toolbar arrows and mouse buttons; text fields keep ⌘-arrows) |
 
 Sidebar letters skip standard macOS keys (⌘A select all, ⌘M minimize,

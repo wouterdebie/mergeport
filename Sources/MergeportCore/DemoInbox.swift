@@ -59,4 +59,11 @@ public enum DemoInbox {
         prs.append(second)
         return InboxSnapshot(viewer: Viewer(login: "you"), pullRequests: prs)
     }
+
+    /// Status panel highlights, as if the last refresh had changed these PRs.
+    public static let changes = [
+        "demo-440": "Review requested",
+        "demo-438": "Approved",
+        "demo-443": "3 new review threads",
+    ]
 }

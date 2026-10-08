@@ -433,6 +433,43 @@ enum SmokeTest {
         try await Task.sleep(for: .milliseconds(300))
         print("PASS: Changed files render as a compressed, collapsible tree that reveals selected files.")
       }
+      if args.contains("--smoke-status-panel") {
+        let wasShowing = model.showStatusPanel
+        model.resetDemoChanges()
+        model.showStatusPanel = true
+        try await Task.sleep(for: .milliseconds(600))
+        guard let panel = StatusPanelController.shared.panel, panel.isVisible, panel.level == .floating,
+          panel.collectionBehavior.contains(.canJoinAllSpaces), panel.styleMask.contains(.nonactivatingPanel),
+          let panelContent = panel.contentView
+        else {
+          throw MergeportError.message("The status panel did not float on every Space.")
+        }
+        guard model.unseenChanges.count == DemoInbox.changes.count else {
+          throw MergeportError.message("Status panel updates were not loaded.")
+        }
+        panelContent.layoutSubtreeIfNeeded()
+        if let bitmap = panelContent.bitmapImageRepForCachingDisplay(in: panelContent.bounds) {
+          panelContent.cacheDisplay(in: panelContent.bounds, to: bitmap)
+          let path = args[flag + 1].replacingOccurrences(of: ".png", with: "-panel.png")
+          try bitmap.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
+        }
+        guard let changed = model.pullRequests.first(where: { model.unseenChanges[$0.id] != nil }) else {
+          throw MergeportError.message("No status panel update to open.")
+        }
+        model.open(changed)
+        guard model.unseenChanges[changed.id] == nil,
+          model.unseenChanges.count == DemoInbox.changes.count - 1
+        else {
+          throw MergeportError.message("Opening a PR did not mark its update as seen.")
+        }
+        model.closeTab(changed.id)
+        model.showStatusPanel = false
+        try await Task.sleep(for: .milliseconds(200))
+        guard !panel.isVisible else { throw MergeportError.message("The status panel did not hide.") }
+        model.showStatusPanel = wasShowing
+        print("PASS: Status panel floats on every Space, highlights updates and opening a PR marks it seen.")
+      }
       guard let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
         NSImage(contentsOf: icon)?.isValid == true
       else {

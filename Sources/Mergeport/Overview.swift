@@ -321,6 +321,7 @@ struct MainWindow: View {
     @AppStorage("collapsedSidebarSections") private var collapsedSections = ""
     @Environment(\.openSettings) private var openSettings
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         NavigationSplitView {
@@ -403,22 +404,17 @@ struct MainWindow: View {
                 primaryButton: .destructive(Text("Discard and close")) { model.closeTab(tab.id, discardingDraft: true) },
                 secondaryButton: .cancel())
         }
-        .task(id: model.refreshInterval) {
-            do {
-                while !Task.isCancelled {
-                    // Running checks resolve in minutes; poll faster so their outcome shows up promptly.
-                    let running = model.pullRequests.contains { $0.state == "OPEN" && $0.checks == .pending }
-                    try await Task.sleep(for: .seconds(running ? min(model.refreshInterval, 30) : model.refreshInterval))
-                    if scenePhase == .active { await model.refresh() }
-                }
-            } catch is CancellationError {
-                return
-            } catch { model.report(error) }
+        .onAppear {
+            model.mainWindowActive = scenePhase == .active
+            let open = openWindow
+            model.openMainWindow = { open(id: "main") }
         }
+        .onDisappear { model.mainWindowActive = false }
         .onChange(of: model.selectedTab) { _, newValue in
             if newValue == nil { Task { await model.refresh() } }
         }
         .onChange(of: scenePhase) { _, phase in
+            model.mainWindowActive = phase == .active
             if phase == .active { Task { await model.refresh() } }
         }
     }

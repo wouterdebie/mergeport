@@ -17,6 +17,7 @@ private struct SavedWorkspace: Codable {
     var tabs: [ReviewTab]
     var selectedTab: String?
     var drafts: [String: ReviewDraft]?
+    var changes: [String: String]?
 }
 
 /// Where the user is in the app, for back/forward navigation.
@@ -61,6 +62,32 @@ final class AppModel: ObservableObject {
             closeFinishedTabs()
         }
     }
+    @Published var showStatusPanel: Bool {
+        didSet { if !isDemo { defaults.set(showStatusPanel, forKey: "showStatusPanel") } }
+    }
+    @Published var showMenuBarItem: Bool {
+        didSet { if !isDemo { defaults.set(showMenuBarItem, forKey: "showMenuBarItem") } }
+    }
+    @Published var panelFilter: PanelFilter {
+        didSet { if !isDemo { defaults.set(panelFilter.rawValue, forKey: "panelFilter") } }
+    }
+    @Published var panelFadesWhenIdle: Bool {
+        didSet { if !isDemo { defaults.set(panelFadesWhenIdle, forKey: "panelFadesWhenIdle") } }
+    }
+    @Published var panelHidesWithApp: Bool {
+        didSet { if !isDemo { defaults.set(panelHidesWithApp, forKey: "panelHidesWithApp") } }
+    }
+    @Published var panelHotKey: Bool {
+        didSet { if !isDemo { defaults.set(panelHotKey, forKey: "panelHotKey") } }
+    }
+    /// What a refresh changed on PRs you haven't opened since, keyed by PR id.
+    @Published private(set) var unseenChanges: [String: String] = [:]
+    @Published private(set) var lastRefreshed: Date?
+    /// The main window is on screen and in front; auto-refresh also runs while the status panel shows.
+    var mainWindowActive = false
+    /// Set by the main window so AppKit code (status panel, menu bar) can reopen it after it was closed.
+    var openMainWindow: (() -> Void)?
+    private var autoRefreshTask: Task<Void, Never>?
     @Published var isConnected = false
     @Published var isRefreshing = false
     @Published var isSigningIn = false
@@ -114,6 +141,12 @@ final class AppModel: ObservableObject {
         tabGrouping = defaults.string(forKey: "tabGrouping").flatMap(TabGrouping.init(rawValue:)) ?? .related
         tabLayout = defaults.string(forKey: "tabLayout").flatMap(TabLayout.init(rawValue:)) ?? .topBar
         tabAutoClose = defaults.string(forKey: "tabAutoClose").flatMap(TabAutoClose.init(rawValue:)) ?? .off
+        showStatusPanel = defaults.bool(forKey: "showStatusPanel")
+        showMenuBarItem = defaults.object(forKey: "showMenuBarItem") as? Bool ?? true
+        panelFilter = defaults.string(forKey: "panelFilter").flatMap(PanelFilter.init(rawValue:)) ?? .involved
+        panelFadesWhenIdle = defaults.bool(forKey: "panelFadesWhenIdle")
+        panelHidesWithApp = defaults.bool(forKey: "panelHidesWithApp")
+        panelHotKey = defaults.bool(forKey: "panelHotKey")
         linearClientID = (Bundle.main.object(forInfoDictionaryKey: LinearOAuth.bundleInfoKey) as? String)
             .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0 }
         defer { trackNavigation() }
@@ -125,6 +158,8 @@ final class AppModel: ObservableObject {
             isDemo = true
             snapshot = DemoInbox.snapshot
             linearIssues = DemoLinear.issues
+            unseenChanges = DemoInbox.changes
+            lastRefreshed = .now.addingTimeInterval(-90)
             return
         }
         loadLinear()
@@ -139,6 +174,7 @@ final class AppModel: ObservableObject {
                     related: { self.tabsRelated($0.pr, $1.pr) })
                 selectedTab = tabs.contains { $0.id == workspace.selectedTab } ? workspace.selectedTab : nil
                 reviewDrafts = workspace.drafts ?? [:]
+                unseenChanges = workspace.changes ?? [:]
             }
         } catch {
             report(error)
@@ -176,9 +212,71 @@ final class AppModel: ObservableObject {
         started = true
         refreshActiveReview()
         preloadReviews()
+        startAutoRefresh()
         if isConnected {
             if login.isEmpty { await rememberViewer() }
             await refresh()
+        }
+    }
+
+    /// Refreshes on the configured interval while the main window is in front or the status panel shows.
+    /// Owned by the model, not the window, so the panel keeps updating after the main window closes.
+    private func startAutoRefresh() {
+        autoRefreshTask?.cancel()
+        autoRefreshTask = Task { [weak self] in
+            var lastAttempt = Date.now
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(5)) } catch { return }
+                guard let self else { return }
+                // Running checks resolve in minutes; poll faster so their outcome shows up promptly.
+                let running = pullRequests.contains { $0.state == "OPEN" && $0.checks == .pending }
+                let interval = Double(running ? min(refreshInterval, 30) : refreshInterval)
+                let last = max(lastAttempt, lastRefreshed ?? .distantPast)
+                guard Date.now.timeIntervalSince(last) >= interval, mainWindowActive || showStatusPanel else { continue }
+                lastAttempt = .now
+                await refresh()
+            }
+        }
+    }
+
+    private func trackChanges(from before: InboxSnapshot?, to result: InboxSnapshot) {
+        lastRefreshed = .now
+        let open = Set(result.pullRequests.map(\.id))
+        var changes = unseenChanges.filter { open.contains($0.key) }
+        if let before, before.viewer.login == result.viewer.login {
+            changes.merge(StatusPanel.changes(from: before.pullRequests, to: result.pullRequests,
+                                              login: result.viewer.login)) { $1 }
+        }
+        // You're looking at it right now; nothing to flag.
+        if mainWindowActive, let selected = activeTab?.pr.id { changes[selected] = nil }
+        if changes != unseenChanges { unseenChanges = changes }
+    }
+
+    func markSeen(_ id: String) {
+        guard unseenChanges[id] != nil else { return }
+        unseenChanges[id] = nil
+        persistWorkspace()
+    }
+
+    func resetDemoChanges() {
+        guard isDemo else { return }
+        unseenChanges = DemoInbox.changes
+    }
+
+    func markAllSeen() {
+        guard !unseenChanges.isEmpty else { return }
+        unseenChanges.removeAll()
+        persistWorkspace()
+    }
+
+    /// Brings the main window forward, reopening it if it was closed.
+    func revealMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.title == "Mergeport" && !($0 is NSPanel) && $0.canBecomeMain }) {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            openMainWindow?()
         }
     }
 
@@ -212,6 +310,7 @@ final class AppModel: ObservableObject {
         }
         do {
             let client = GitHubClient(token: token, session: networkSession)
+            let before = snapshot
             let previousLogin = snapshot?.viewer.login
             let result = try await client.snapshot(repositories: followed) { partial, loaded in
                 await self.showListedInbox(partial, loaded: loaded, generation: currentGeneration, followed: followed)
@@ -233,8 +332,10 @@ final class AppModel: ObservableObject {
                 selectedTab = nil
                 reviewModels.removeAll()
                 reviewDrafts.removeAll()
+                unseenChanges.removeAll()
             }
             snapshot = result
+            trackChanges(from: before, to: result)
             for index in tabs.indices {
                 if var fresh = tabUpdates[tabs[index].id] {
                     fresh.id = tabs[index].id
@@ -421,6 +522,7 @@ final class AppModel: ObservableObject {
             tabs.insert(tab, at: TabGroups.insertionIndex(for: tab, in: tabs) { tabsRelated($0.pr, $1.pr) })
             selectedTab = pr.id
         }
+        unseenChanges[pr.id] = nil
         persistWorkspace()
         refreshActiveReview()
     }
@@ -465,6 +567,7 @@ final class AppModel: ObservableObject {
 
     func selectTab(_ id: String?) {
         selectedTab = id
+        if let id { unseenChanges[id] = nil }
         closeFinishedTabs()
         persistWorkspace()
         refreshActiveReview()
@@ -889,7 +992,7 @@ final class AppModel: ObservableObject {
     private func persistWorkspace() {
         guard !isDemo else { return }
         do {
-            defaults.set(try JSONEncoder().encode(SavedWorkspace(snapshot: snapshot, tabs: tabs, selectedTab: selectedTab, drafts: reviewDrafts)),
+            defaults.set(try JSONEncoder().encode(SavedWorkspace(snapshot: snapshot, tabs: tabs, selectedTab: selectedTab, drafts: reviewDrafts, changes: unseenChanges)),
                          forKey: "workspace")
         } catch { report(error) }
     }
