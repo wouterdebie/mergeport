@@ -99,6 +99,7 @@ figcaption { font-size: 10px; text-align: center; margin-top: 13px; color: var(-
 .feature-card h3 { margin-top: 17px; margin-bottom: 9px; font-size: 19px; line-height: 1.3; letter-spacing: -.5px; }
 .feature-card p { color: var(--muted); font-size: 13px; line-height: 1.85; }
 .spotlight, .family-card, .wide-card { grid-column: span 3; }
+.full-card { grid-column: 1 / -1; }
 .small-card { grid-column: span 2; padding: 26px; }
 .small-card h3 { font-size: 17px; }
 .setup-section { border-block: 1px solid var(--border); background: var(--surface); }
@@ -217,7 +218,7 @@ footer nav a { font-size: 11px; }
   .section-heading h2 { font-size: 32px; }
   .feature-grid { gap: 15px; grid-template-columns: 1fr 1fr; margin-top: 28px; }
   .feature-card { grid-column: span 1; padding: 22px; }
-  .small-card:last-child { grid-column: 1 / -1; }
+  .small-card:last-child, .full-card { grid-column: 1 / -1; }
   .setup-layout, .faq-section { grid-template-columns: 1fr; gap: 32px; }
   .setup-steps { max-width: 580px; }
   .closing { padding-bottom: 45px; }
