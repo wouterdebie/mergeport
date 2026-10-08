@@ -100,6 +100,18 @@ public enum TabLayout: String, CaseIterable, Codable, Sendable {
   }
 }
 
+/// Which PRs are listed when tabs are shown in the sidebar.
+public enum SidebarContent: String, CaseIterable, Codable, Sendable {
+  case openTabs, fullInbox
+
+  public var title: String {
+    switch self {
+    case .openTabs: "Open tabs"
+    case .fullInbox: "Full inbox"
+    }
+  }
+}
+
 /// When tabs of merged or closed PRs close by themselves.
 public enum TabAutoClose: String, CaseIterable, Codable, Sendable {
   case off, immediately, afterDay

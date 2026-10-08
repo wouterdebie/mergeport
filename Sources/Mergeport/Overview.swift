@@ -2,6 +2,25 @@ import AppKit
 import MergeportCore
 import SwiftUI
 
+private struct SidebarCloseProbe: NSViewRepresentable {
+    let measured: (NSRect) -> Void
+
+    final class ProbeView: NSView {
+        var measured: ((NSRect) -> Void)?
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func layout() {
+            super.layout()
+            if window != nil { measured?(convert(bounds, to: nil)) }
+        }
+    }
+
+    func makeNSView(context: Context) -> ProbeView { ProbeView() }
+    func updateNSView(_ view: ProbeView, context: Context) {
+        view.measured = measured
+        view.needsLayout = true
+    }
+}
+
 enum YardPalette {
     static let cyan = Color(red: 0.49, green: 1, blue: 0.94)
     static let blue = Color(red: 0.34, green: 0.72, blue: 1)
@@ -526,7 +545,7 @@ struct MainWindow: View {
     // MARK: Tabs in the sidebar
 
     private var openTabsSection: some View {
-        let tabs = model.tabs
+        let tabs = model.sidebarReviewTabs
         let runs = TabGroups.runs(tabs) { model.tabsRelated($0.pr, $1.pr) }
         let menu = Menu {
             tabListMenu
@@ -534,9 +553,12 @@ struct MainWindow: View {
             Image(systemName: "ellipsis.circle")
         }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Close tabs")
-        return sidebarSection("OPEN", count: tabs.count, accessory: tabs.isEmpty ? nil : AnyView(menu)) {
+        return sidebarSection(model.sidebarContent == .fullInbox ? "PULL REQUESTS" : "OPEN",
+                              count: tabs.count, accessory: AnyView(menu)) {
             if tabs.isEmpty {
-                Text("PRs you open show up here, grouped like the overview.")
+                Text(model.sidebarContent == .fullInbox
+                     ? "Your inbox PRs will appear here."
+                     : "PRs you open show up here, grouped like the overview.")
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10)
             }
             ForEach(Array(runs.enumerated()), id: \.element) { _, run in
@@ -545,14 +567,14 @@ struct MainWindow: View {
                     VStack(alignment: .leading, spacing: 1) {
                         sidebarGroupHeader(label, tabs: run.map { tabs[$0] }, collapsed: collapsed)
                         if !collapsed {
-                            ForEach(run, id: \.self) { sidebarTab(tabs[$0], index: $0, groupLabel: label) }
+                            ForEach(run, id: \.self) { sidebarTab(tabs[$0], groupLabel: label) }
                         }
                     }
                     .padding(3)
                     .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
                     .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.primary.opacity(0.08)))
                 } else {
-                    ForEach(run, id: \.self) { sidebarTab(tabs[$0], index: $0, groupLabel: nil) }
+                    ForEach(run, id: \.self) { sidebarTab(tabs[$0], groupLabel: nil) }
                 }
             }
         }
@@ -566,6 +588,11 @@ struct MainWindow: View {
         Divider()
         Picker("Show Tabs In", selection: $model.tabLayout) {
             ForEach(TabLayout.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        if model.tabLayout == .sidebar {
+            Picker("Sidebar Shows", selection: $model.sidebarContent) {
+                ForEach(SidebarContent.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
         }
     }
 
@@ -603,49 +630,76 @@ struct MainWindow: View {
                 if collapsed { collapsedGroups.remove(label) } else { collapsedGroups.insert(label) }
             }
             Button("Close Group") { model.closeTabs(tabs.map(\.id)) }
+                .disabled(!tabs.contains { tab in model.tabs.contains { $0.id == tab.id } })
         }
     }
 
-    private func sidebarTab(_ tab: ReviewTab, index: Int, groupLabel: String?) -> some View {
+    private func sidebarTab(_ tab: ReviewTab, groupLabel: String?) -> some View {
         let pr = tab.pr
         let ticket = model.ticket(for: pr)
         let selected = model.selectedTab == tab.id
         let status = YardPalette.status(pr)
         let detail = pr.state != "OPEN" ? pr.state.capitalized : pr.stage == .ready ? "Ready to merge" : pr.waitingReason
-        return HStack(alignment: .top, spacing: 8) {
-            Image(systemName: status.symbol).foregroundStyle(status.color).frame(width: 18).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(TabGroups.title(pr.title, without: ticket)).lineLimit(1).truncationMode(.tail)
-                    .fontWeight(selected ? .semibold : .regular)
-                HStack(spacing: 5) {
-                    Text("#" + String(pr.number)).monospacedDigit()
-                    if let ticket, ticket != groupLabel { Text(ticket).monospaced() }
-                    Text("→ " + pr.base).monospaced().foregroundStyle(Color.branchBlue).lineLimit(1).layoutPriority(-1)
-                    Text("·")
-                    Text(detail).lineLimit(1).truncationMode(.tail).layoutPriority(-2)
+        let openIndex = model.tabs.firstIndex { $0.id == tab.id }
+        return HStack(spacing: 0) {
+            Button {
+                if openIndex != nil { model.selectTab(tab.id) } else { model.open(pr) }
+            } label: {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: status.symbol).foregroundStyle(status.color).frame(width: 18).padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(TabGroups.title(pr.title, without: ticket)).lineLimit(1).truncationMode(.tail)
+                            .fontWeight(selected ? .semibold : .regular)
+                        HStack(spacing: 5) {
+                            Text("#" + String(pr.number)).monospacedDigit()
+                            if let ticket, ticket != groupLabel { Text(ticket).monospaced() }
+                            Text("→ " + pr.base).monospaced().foregroundStyle(Color.branchBlue).lineLimit(1).layoutPriority(-1)
+                            Text("·")
+                            Text(detail).lineLimit(1).truncationMode(.tail).layoutPriority(-2)
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 7).padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }.buttonStyle(.plain)
             Group {
-                if hoveredTab == tab.id || selected {
-                    Button { model.closeTab(tab.id) } label: {
-                        Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).frame(width: 16, height: 16)
-                    }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close tab")
-                } else if model.showShortcutHints, let hint = AppModel.tabShortcut(index: index, count: model.tabs.count) {
-                    ShortcutHint(label: hint)
+                if let openIndex {
+                    if hoveredTab == tab.id || selected {
+                        Button { model.closeTab(tab.id) } label: {
+                            Image(systemName: "xmark").font(.system(size: 11, weight: .semibold))
+                                .frame(width: 30, height: 30).contentShape(Rectangle())
+                        }.buttonStyle(.plain).foregroundStyle(.secondary).help("Close review")
+                            .accessibilityIdentifier("sidebar-close-\(tab.id)")
+                            .background {
+                                if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+                                    SidebarCloseProbe { model.sidebarCloseFrames[tab.id] = $0 }
+                                }
+                            }
+                    } else if model.showShortcutHints, let hint = AppModel.tabShortcut(index: openIndex, count: model.tabs.count) {
+                        ShortcutHint(label: hint).frame(width: 30, height: 30)
+                    } else {
+                        Color.clear.frame(width: 30, height: 30)
+                    }
+                } else {
+                    Color.clear.frame(width: 30, height: 30)
                 }
-            }.padding(.top, 1)
+            }.padding(.trailing, 3)
         }
         .font(.callout)
-        .padding(.horizontal, 7).padding(.vertical, 6)
         .background(tabBackground(tab), in: RoundedRectangle(cornerRadius: 7))
-        .contentShape(RoundedRectangle(cornerRadius: 7))
-        .onTapGesture { model.selectTab(tab.id) }
         .onHover { inside in
             if inside { hoveredTab = tab.id } else if hoveredTab == tab.id { hoveredTab = nil }
         }
-        .contextMenu { tabMenu(tab) }
+        .contextMenu {
+            if openIndex != nil { tabMenu(tab) }
+            else {
+                Button("Open Review") { model.open(pr) }
+                Button("Open on GitHub") { model.openExternal(pr.url) }
+            }
+        }
         .help(pr.displayTitle)
     }
 

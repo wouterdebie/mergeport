@@ -190,6 +190,92 @@ enum SmokeTest {
           "PASS: reusable branch rules, explicit aliases, sibling links, related PRs, stacks, tab group actions, open all and cross-repository ticket grouping."
         )
       }
+      if args.contains("--smoke-sidebar-inbox") {
+        let savedLayout = model.tabLayout
+        let savedContent = model.sidebarContent
+        let savedTabs = model.tabs
+        let savedSelection = model.selectedTab
+        let savedSnapshot = model.snapshot
+        let savedSearch = model.search
+        defer {
+          model.snapshot = savedSnapshot
+          model.tabs = savedTabs
+          model.selectedTab = savedSelection
+          model.sidebarContent = savedContent
+          model.tabLayout = savedLayout
+          model.search = savedSearch
+        }
+        model.tabLayout = .sidebar
+        model.sidebarContent = .fullInbox
+        model.tabs = []
+        model.selectedTab = nil
+        guard let pr = model.pullRequests.first,
+          Set(model.sidebarReviewTabs.map(\.id)) == Set(model.pullRequests.map(\.id)),
+          model.tabs.isEmpty
+        else { throw MergeportError.message("Full inbox sidebar opened tabs or omitted PRs.") }
+        model.search = "no matches for sidebar smoke"
+        guard model.sidebarReviewTabs.count == model.pullRequests.count else {
+          throw MergeportError.message("Overview search filtered the full inbox sidebar.")
+        }
+        model.search = savedSearch
+        model.open(pr)
+        try await Task.sleep(for: .milliseconds(700))
+        guard model.tabs.count == 1, model.sidebarReviewTabs.filter({ $0.id == pr.id }).count == 1 else {
+          throw MergeportError.message("Opening an inbox row duplicated it or opened other reviews.")
+        }
+        if let view = window.contentView,
+          let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        {
+          view.cacheDisplay(in: view.bounds, to: bitmap)
+          try bitmap.representation(using: .png, properties: [:])?.write(
+            to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-sidebar-inbox.png")))
+        }
+        guard let frame = model.sidebarCloseFrames[pr.id], frame.width >= 30, frame.height >= 30 else {
+          throw MergeportError.message("The sidebar close button lacks a rendered 30-point hit area: \(model.sidebarCloseFrames).")
+        }
+        // Click the edge of the larger target, outside the visible x.
+        let point = NSPoint(x: frame.minX + 2, y: frame.midY)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+          guard let event = NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+          else { throw MergeportError.message("Could not generate a sidebar close click.") }
+          window.sendEvent(event)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        guard model.tabs.isEmpty, model.selectedTab == nil,
+          model.sidebarReviewTabs.contains(where: { $0.id == pr.id })
+        else { throw MergeportError.message("Closing an inbox review removed its row or selected it again.") }
+        model.open(pr)
+        try await Task.sleep(for: .milliseconds(300))
+        model.snapshot?.pullRequests.removeAll { $0.id == pr.id }
+        guard model.sidebarReviewTabs.contains(where: { $0.id == pr.id }) else {
+          throw MergeportError.message("An open review disappeared when it left the inbox.")
+        }
+        model.closeTab(pr.id)
+        guard !model.sidebarReviewTabs.contains(where: { $0.id == pr.id }) else {
+          throw MergeportError.message("An out-of-inbox review stayed listed after closing.")
+        }
+        model.snapshot = savedSnapshot
+        model.open(pr)
+        guard let active = model.activeTab else {
+          throw MergeportError.message("Inbox review did not open for the draft check.")
+        }
+        let review = model.reviewModel(for: active)
+        review.draft.discussion = "Retain this draft"
+        model.closeTab(pr.id)
+        guard model.tabToClose?.id == pr.id, model.tabs.contains(where: { $0.id == pr.id }) else {
+          throw MergeportError.message("Full inbox mode lost draft-close confirmation.")
+        }
+        model.tabToClose = nil
+        review.draft = ReviewDraft()
+        model.closeTab(pr.id)
+        model.sidebarContent = .openTabs
+        guard model.sidebarReviewTabs.isEmpty else {
+          throw MergeportError.message("Open-tabs mode unexpectedly includes unopened inbox PRs.")
+        }
+        print("PASS: full inbox sidebar lists unopened PRs, keeps open reviews outside the inbox, preserves drafts and closes through a 30-point button.")
+      }
       if let expected = args.firstIndex(of: "--expect-bundled-client-id") {
         guard args.count > expected + 1 else {
           throw MergeportError.message("Expected client ID is missing.")

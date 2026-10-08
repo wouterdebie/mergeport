@@ -242,6 +242,13 @@ struct SettingsView: View {
                     }.pickerStyle(.segmented)
                     Text("Sidebar lists open PRs above the inbox with their status, grouped like the tab bar; groups collapse. The top bar keeps Chrome-style tabs.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if model.tabLayout == .sidebar {
+                        Picker("Sidebar shows", selection: $model.sidebarContent) {
+                            ForEach(SidebarContent.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }.pickerStyle(.segmented)
+                        Text("Full inbox lists every inbox PR, regardless of overview filters. Click to open a review; × closes that review but leaves the PR listed. Open reviews that leave the inbox stay listed until closed.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Picker("Close merged and closed tabs", selection: $model.tabAutoClose) {
                         ForEach(TabAutoClose.allCases, id: \.self) { Text($0.title).tag($0) }
                     }

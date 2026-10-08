@@ -70,6 +70,11 @@ indicator. Cached reviews are kept in memory for the current app session.
   Tabs in Sidebar) moves open PRs into an "Open" section above the inbox:
   one row per PR with its status, target branch and what it's waiting on,
   grouped like the tab bar, with collapsible groups and sidebar sections.
+  Choose **Sidebar shows › Full inbox** to list every inbox PR without opening
+  them all. Overview filters do not change this list. Clicking a PR opens its
+  review; the larger × button closes only the review, leaving its inbox entry
+  available. Open reviews that leave the inbox remain listed until closed.
+  The default remains **Open tabs**; the choice is saved across launches.
 - **Open all**: open every PR in the current overview view (after filters and
   search), or every PR in one group, as tabs without leaving the overview. PRs
   that are already open are skipped; more than 10 asks first.
@@ -422,6 +427,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 expansion, rendered line numbers, comment anchors and same-commit refreshes.
 `--smoke-merge-policy` with `--smoke-native-review` checks optional-failure
 warnings alongside merge eligibility, and mandatory approval and policy blocks.
+`--smoke-sidebar-inbox` checks full-inbox listing, closing an open review
+without losing its inbox entry, draft protection and the 30-point close button.
 `--smoke-shortcuts` checks every sidebar shortcut, tab numbers, ⌘K and that no two
 menu items share a key equivalent.
 `--smoke-linear` checks the Linear loopback callback (state validation) and

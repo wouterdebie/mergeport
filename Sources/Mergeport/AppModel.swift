@@ -56,6 +56,10 @@ final class AppModel: ObservableObject {
     @Published var tabLayout: TabLayout {
         didSet { if !isDemo { defaults.set(tabLayout.rawValue, forKey: "tabLayout") } }
     }
+    @Published var sidebarContent: SidebarContent {
+        didSet { if !isDemo { defaults.set(sidebarContent.rawValue, forKey: "sidebarContent") } }
+    }
+    var sidebarCloseFrames: [String: NSRect] = [:]
     @Published var tabAutoClose: TabAutoClose {
         didSet {
             if !isDemo { defaults.set(tabAutoClose.rawValue, forKey: "tabAutoClose") }
@@ -141,6 +145,7 @@ final class AppModel: ObservableObject {
         refreshInterval = [60, 120, 300, 600].contains(interval) ? interval : 120
         tabGrouping = defaults.string(forKey: "tabGrouping").flatMap(TabGrouping.init(rawValue:)) ?? .related
         tabLayout = defaults.string(forKey: "tabLayout").flatMap(TabLayout.init(rawValue:)) ?? .topBar
+        sidebarContent = defaults.string(forKey: "sidebarContent").flatMap(SidebarContent.init(rawValue:)) ?? .openTabs
         tabAutoClose = defaults.string(forKey: "tabAutoClose").flatMap(TabAutoClose.init(rawValue:)) ?? .off
         showStatusPanel = defaults.bool(forKey: "showStatusPanel")
         showMenuBarItem = defaults.object(forKey: "showMenuBarItem") as? Bool ?? true
@@ -190,6 +195,19 @@ final class AppModel: ObservableObject {
         return "Not connected"
     }
     var pullRequests: [PullRequest] { snapshot?.pullRequests ?? [] }
+
+    var sidebarReviewTabs: [ReviewTab] {
+        guard sidebarContent == .fullInbox else { return tabs }
+        let inbox = pullRequests.map { pr in
+            var tab = tabs.first(where: { $0.id == pr.id }) ?? ReviewTab(pr: pr, location: pr.url)
+            tab.pr = pr
+            return tab
+        }
+        let inboxIDs = Set(inbox.map(\.id))
+        return TabGroups.clustered(inbox + tabs.filter { !inboxIDs.contains($0.id) }) {
+            tabsRelated($0.pr, $1.pr)
+        }
+    }
     var knownRepositories: [String] { Set(repositories + pullRequests.map(\.repository)).sorted() }
     var activeTab: ReviewTab? { tabs.first { $0.id == selectedTab } }
     var accountSessionID: UUID { generation }
