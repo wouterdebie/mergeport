@@ -3,6 +3,27 @@ import Foundation
 import Testing
 
 struct TabGroupsTests {
+  @Test func sortedGroupsUseNaturalKeysAndStableMembersRegardlessOfActivityOrder() {
+    struct Item {
+      let id: Int
+      let ticket: String?
+    }
+    let items = [
+      Item(id: 5, ticket: nil), Item(id: 4, ticket: "CON-10"),
+      Item(id: 3, ticket: "CON-9"), Item(id: 2, ticket: "CON-10"),
+      Item(id: 1, ticket: "CON-9"),
+    ]
+    func sorted(_ values: [Item]) -> [Int] {
+      TabGroups.sorted(
+        values, related: { $0.ticket != nil && $0.ticket == $1.ticket },
+        groupKey: { $0.first?.ticket }, memberOrder: { $0.id < $1.id }
+      ).map(\.id)
+    }
+    #expect(sorted(items) == [1, 3, 2, 4, 5])
+    #expect(sorted(items.reversed()) == [1, 3, 2, 4, 5])
+    #expect(sorted([]).isEmpty)
+  }
+
   /// Items related when they share the first character ("a1" ~ "a2").
   private let related: (String, String) -> Bool = { $0 != $1 && $0.first == $1.first }
 

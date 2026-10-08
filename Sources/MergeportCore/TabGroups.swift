@@ -2,6 +2,27 @@ import Foundation
 
 /// Keeps related review tabs next to each other, like browser tab groups.
 public enum TabGroups {
+  /// Sorts complete related groups without letting activity reorder their members.
+  public static func sorted<T>(
+    _ items: [T], related: (T, T) -> Bool, groupKey: ([T]) -> String?,
+    memberOrder: (T, T) -> Bool
+  ) -> [T] {
+    let clustered = clustered(items.sorted(by: memberOrder), related: related)
+    let groups = runs(clustered, related: related).map { Array(clustered[$0]) }
+    return groups.sorted { left, right in
+      let leftKey = groupKey(left), rightKey = groupKey(right)
+      switch (leftKey, rightKey) {
+      case (.some(let a), .some(let b)):
+        let order = a.compare(b, options: [.numeric, .caseInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+        if order != .orderedSame { return order == .orderedAscending }
+      case (.some, .none): return true
+      case (.none, .some): return false
+      case (.none, .none): break
+      }
+      return memberOrder(left[0], right[0])
+    }.flatMap { $0 }
+  }
+
   /// Where a new item goes: at the end of the group it is related to, else at the end.
   public static func insertionIndex<T>(for item: T, in items: [T], related: (T, T) -> Bool) -> Int {
     guard let last = items.lastIndex(where: { related($0, item) }) else { return items.count }

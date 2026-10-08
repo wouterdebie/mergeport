@@ -204,9 +204,30 @@ final class AppModel: ObservableObject {
             return tab
         }
         let inboxIDs = Set(inbox.map(\.id))
-        return TabGroups.clustered(inbox + tabs.filter { !inboxIDs.contains($0.id) }) {
-            tabsRelated($0.pr, $1.pr)
-        }
+        return TabGroups.sorted(
+            inbox + tabs.filter { !inboxIDs.contains($0.id) },
+            related: { tabsRelated($0.pr, $1.pr) },
+            groupKey: { group in
+                guard let first = group.first?.pr else { return nil }
+                switch self.tabGrouping {
+                case .ticket: return self.ticket(for: first)
+                case .branch: return self.canonicalBranch(first)
+                case .stack: return first.stack.map { "\(first.repository) Stack #\($0.number)" }
+                case .repository: return first.repository
+                case .none: return nil
+                case .related:
+                    return self.tabGroupLabel(group.map(\.pr))
+                        ?? self.ticket(for: first) ?? self.canonicalBranch(first)
+                }
+            },
+            memberOrder: { left, right in
+                let a = left.pr, b = right.pr
+                let repository = a.repository.compare(b.repository, options: [.caseInsensitive],
+                                                       locale: Locale(identifier: "en_US_POSIX"))
+                if repository != .orderedSame { return repository == .orderedAscending }
+                if a.number != b.number { return a.number < b.number }
+                return a.id < b.id
+            })
     }
     var knownRepositories: [String] { Set(repositories + pullRequests.map(\.repository)).sorted() }
     var activeTab: ReviewTab? { tabs.first { $0.id == selectedTab } }

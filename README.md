@@ -75,6 +75,10 @@ indicator. Cached reviews are kept in memory for the current app session.
   review; the larger × button closes only the review, leaving its inbox entry
   available. Open reviews that leave the inbox remain listed until closed.
   The default remains **Open tabs**; the choice is saved across launches.
+  Full-inbox groups sort by the selected tab grouping (ticket IDs use natural
+  numeric order), with stable repository/PR ordering within each group.
+  Activity and sync order no longer move the rows; PRs without a grouping key
+  appear last.
 - **Open all**: open every PR in the current overview view (after filters and
   search), or every PR in one group, as tabs without leaving the overview. PRs
   that are already open are skipped; more than 10 asks first.

@@ -218,6 +218,17 @@ enum SmokeTest {
           throw MergeportError.message("Overview search filtered the full inbox sidebar.")
         }
         model.search = savedSearch
+        let savedGrouping = model.tabGrouping
+        for grouping in TabGrouping.allCases {
+          model.tabGrouping = grouping
+          let orderedIDs = model.sidebarReviewTabs.map(\.id)
+          model.snapshot?.pullRequests.reverse()
+          guard model.sidebarReviewTabs.map(\.id) == orderedIDs else {
+            throw MergeportError.message("Activity changed the sidebar order for \(grouping.title).")
+          }
+          model.snapshot = savedSnapshot
+        }
+        model.tabGrouping = savedGrouping
         model.open(pr)
         try await Task.sleep(for: .milliseconds(700))
         guard model.tabs.count == 1, model.sidebarReviewTabs.filter({ $0.id == pr.id }).count == 1 else {
