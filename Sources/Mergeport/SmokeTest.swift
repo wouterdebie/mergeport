@@ -327,6 +327,16 @@ enum SmokeTest {
         guard scrollView.contentView.bounds.origin.y > previousOffset else {
           throw MergeportError.message("Scrolling over an HTML body did not move the conversation timeline.")
         }
+        for _ in 0..<6 { scrollView.scrollWheel(with: event) }
+        try await Task.sleep(for: .milliseconds(400))
+        if let view = scrollView.window?.contentView,
+          let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+        {
+          view.cacheDisplay(in: view.bounds, to: bitmap)
+          try bitmap.representation(using: .png, properties: [:])?.write(
+            to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-scrolled.png")))
+        }
+        scrollView.contentView.scroll(to: .zero)
         var suggestion: String?
         for candidate in webViews(in: content) {
           suggestion = try await evaluate(candidate,

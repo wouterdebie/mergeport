@@ -20,6 +20,7 @@ struct NativeReviewView: View {
   @State private var confirmClearDraft = false
   @State private var commentTarget: CommentTarget?
   @State private var conversationWidth: CGFloat = 0
+  @State private var sidebarLeading: CGFloat = 0
   @State private var activePicker: SidebarPicker?
   @State private var confirmLock = false
   @State private var scrollTarget: String?
@@ -459,10 +460,27 @@ struct NativeReviewView: View {
           }
         }
       }.frame(maxWidth: .infinity, alignment: .leading)
-        if conversationWidth >= 900 { prSidebar(details).frame(width: 280) }
+        // Reserves the sidebar's column; the sidebar itself floats in an overlay so it stays on screen.
+        if conversationWidth >= 900 {
+          Color.clear.frame(width: Self.sidebarWidth, height: 1)
+            .onGeometryChange(for: CGFloat.self) {
+              $0.frame(in: .named(Self.conversationSpace)).minX
+            } action: { sidebarLeading = $0 }
+        }
       }
       .padding(22).frame(maxWidth: Self.pageWidth, alignment: .leading)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+    .coordinateSpace(name: Self.conversationSpace)
+    .overlay(alignment: .topLeading) {
+      if conversationWidth >= 900 {
+        ViewThatFits(in: .vertical) {
+          prSidebar(details)
+          ScrollView { prSidebar(details) }.scrollIndicators(.automatic)
+        }
+        .frame(width: Self.sidebarWidth, alignment: .topLeading)
+        .padding(.vertical, 22).padding(.leading, sidebarLeading)
+      }
     }
     .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { conversationWidth = $0 }
     .onAppear { scroll(proxy) }
@@ -480,6 +498,8 @@ struct NativeReviewView: View {
 
   /// Comparable to github.com's maximum content width.
   static let pageWidth: CGFloat = 1280
+  static let sidebarWidth: CGFloat = 280
+  private static let conversationSpace = "conversation"
 
   private func prSidebar(_ details: ReviewDetails) -> some View {
     VStack(alignment: .leading, spacing: 0) {
