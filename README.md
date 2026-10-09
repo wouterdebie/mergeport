@@ -15,7 +15,10 @@ Avatars come from GitHub's API (including bots such as Copilot, shown as
 "Copilot" with an AI badge); people are round and bots square, as on GitHub.
 Overview rows show the PR author's avatar.
 Cross-references are grouped ("This was referenced") with Open/Draft/Merged/Closed
-pills. The merge box mirrors GitHub's: review, checks and conflict rows with status
+pills. Adjacent review requests (and request removals) from the same person within
+one minute are combined into one timeline row listing all reviewers. Different
+actors, request types and intervening activity stay separate.
+The merge box mirrors GitHub's: review, checks and conflict rows with status
 icons and a merge button. The header actions are Ready for review / Convert to
 draft, Review changes, and Ready to merge. The conversation is limited to
 GitHub's page width; on wide windows a sidebar shows reviewers (with

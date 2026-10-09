@@ -1568,6 +1568,14 @@ private struct RESTTimelineEvent: Decodable, Sendable {
     guard let createdAt else { return nil }
     let action: String
     let symbol: String
+    let reviewRequest: ConversationEvent.ReviewRequest?
+    if actor != nil, ["review_requested", "review_request_removed"].contains(event),
+      let reviewer = requestedReviewer?.login ?? requestedTeam?.name {
+      reviewRequest = .init(
+        kind: event == "review_requested" ? .requested : .removed, reviewer: reviewer)
+    } else {
+      reviewRequest = nil
+    }
     switch event {
     case "commented", "reviewed", "committed": return nil
     case "review_requested":
@@ -1623,7 +1631,8 @@ private struct RESTTimelineEvent: Decodable, Sendable {
       actor: actor?.login ?? "GitHub", action: action, date: createdAt, symbol: symbol,
       url: source?.issue?.htmlUrl,
       title: source?.issue.map { "\($0.title) #\($0.number) · \($0.state)" },
-      reference: event == "cross-referenced" ? source?.issue?.reference : nil)
+      reference: event == "cross-referenced" ? source?.issue?.reference : nil,
+      reviewRequest: reviewRequest)
   }
 }
 private struct RESTCommit: Decodable, Sendable {

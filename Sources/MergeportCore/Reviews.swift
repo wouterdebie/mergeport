@@ -414,6 +414,17 @@ public struct ReviewDetails: Sendable {
     }
     var result: [ConversationItem] = []
     for item in sorted {
+      if case .event(let event) = item, let request = event.reviewRequest {
+        if case .reviewRequests(let group)? = result.last, let first = group.first,
+          first.actor.caseInsensitiveCompare(event.actor) == .orderedSame,
+          first.reviewRequest?.kind == request.kind,
+          event.date.timeIntervalSince(first.date) <= 60 {
+          result[result.count - 1] = .reviewRequests(group + [event])
+        } else {
+          result.append(.reviewRequests([event]))
+        }
+        continue
+      }
       guard case .event(let event) = item, event.reference != nil else {
         result.append(item)
         continue
@@ -574,6 +585,27 @@ public struct ConversationEvent: Identifiable, Sendable {
   public let url: URL?
   public let title: String?
   public let reference: Reference?
+  public let reviewRequest: ReviewRequest?
+
+  public struct ReviewRequest: Sendable {
+    public enum Kind: Sendable { case requested, removed }
+    public let kind: Kind
+    public let reviewer: String
+
+    public init(kind: Kind = .requested, reviewer: String) {
+      self.kind = kind
+      self.reviewer = reviewer
+    }
+
+    public func action(reviewers: [String]) -> String {
+      let names = reviewers.map(ReviewDetails.displayName)
+      let list = names.count > 1
+        ? names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        : names.first ?? reviewer
+      return kind == .requested
+        ? "requested review from \(list)" : "removed a review request for \(list)"
+    }
+  }
 
   public struct Reference: Sendable, Hashable {
     public enum State: String, Sendable { case open, draft, merged, closed }
@@ -600,7 +632,7 @@ public struct ConversationEvent: Identifiable, Sendable {
   public init(
     id: String, actor: String, action: String, date: Date,
     symbol: String = "circle", url: URL? = nil, title: String? = nil,
-    reference: Reference? = nil
+    reference: Reference? = nil, reviewRequest: ReviewRequest? = nil
   ) {
     self.id = id
     self.actor = actor
@@ -610,6 +642,7 @@ public struct ConversationEvent: Identifiable, Sendable {
     self.url = url
     self.title = title
     self.reference = reference
+    self.reviewRequest = reviewRequest
   }
 }
 
@@ -621,6 +654,19 @@ public enum ConversationItem: Identifiable, Sendable {
   case thread(ReviewThread)
   /// Consecutive cross-references, shown together like GitHub's "This was referenced".
   case references([ConversationEvent])
+  /// Adjacent requests by the same actor within one minute of the first request.
+  case reviewRequests([ConversationEvent])
+
+  public var reviewRequestAction: String? {
+    guard case .reviewRequests(let events) = self, let request = events.first?.reviewRequest else {
+      return nil
+    }
+    var seen = Set<String>()
+    let reviewers = events.compactMap(\.reviewRequest?.reviewer).filter {
+      seen.insert($0.lowercased()).inserted
+    }
+    return request.action(reviewers: reviewers)
+  }
 
   public var id: String {
     switch self {
@@ -630,6 +676,7 @@ public enum ConversationItem: Identifiable, Sendable {
     case .event(let value): "event-\(value.id)"
     case .thread(let value): "thread-\(value.id)"
     case .references(let value): "references-\(value.first?.id ?? "")"
+    case .reviewRequests(let value): "review-requests-\(value.first?.id ?? "")"
     }
   }
   public var date: Date {
@@ -640,6 +687,7 @@ public enum ConversationItem: Identifiable, Sendable {
     case .event(let value): value.date
     case .thread(let value): value.comments.first?.date ?? .distantPast
     case .references(let value): value.first?.date ?? .distantPast
+    case .reviewRequests(let value): value.first?.date ?? .distantPast
     }
   }
 }
@@ -941,7 +989,12 @@ public enum DemoReview {
       events: [
         ConversationEvent(
           id: "sample-request", actor: "you", action: "requested review from Copilot",
-          date: .now.addingTimeInterval(-1800), symbol: "eye"),
+          date: .now.addingTimeInterval(-1800), symbol: "eye",
+          reviewRequest: .init(reviewer: "copilot-pull-request-reviewer")),
+        ConversationEvent(
+          id: "sample-request-team", actor: "you", action: "requested review from platform-team",
+          date: .now.addingTimeInterval(-1799), symbol: "eye",
+          reviewRequest: .init(reviewer: "platform-team")),
         ConversationEvent(
           id: "sample-ready", actor: "you", action: "marked this PR ready for review",
           date: .now.addingTimeInterval(-900), symbol: "eye"),

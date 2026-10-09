@@ -733,8 +733,12 @@ struct GitHubClientTests {
             "id": 11, "event": "review_requested", "actor": ["login": "you"],
             "requested_reviewer": ["login": "alex"], "created_at": "2026-10-06T11:01:00Z",
           ],
+          [
+            "id": 13, "event": "review_requested", "actor": ["login": "you"],
+            "requested_team": ["name": "platform-team"], "created_at": "2026-10-06T11:01:01Z",
+          ],
         ]
-          + (0..<98).map {
+          + (0..<97).map {
             ["id": 100 + $0, "event": "commented", "created_at": "2026-10-06T12:00:00Z"]
           }),
       "/repos/acme/app/issues/1/timeline?per_page=100&page=2": try Reply([
@@ -808,8 +812,12 @@ struct GitHubClientTests {
     #expect(details.bodyHTML == "<h2>Summary</h2>")
     #expect(details.baseSHA == "base-commit")
     #expect(details.comments.first?.bodyHTML == "<p>Looks good</p>")
-    #expect(details.events.count == 3)
+    #expect(details.events.count == 4)
     #expect(details.events[1].action == "requested review from alex")
+    #expect(details.events[1].reviewRequest?.reviewer == "alex")
+    #expect(details.events[2].reviewRequest?.reviewer == "platform-team")
+    #expect(details.conversation.first { $0.reviewRequestAction != nil }?.reviewRequestAction
+      == "requested review from alex and platform-team")
     #expect(details.events.last?.title == "Related change #5459 · closed")
     #expect(details.events.last?.reference?.state == .merged)
     #expect(details.events.last?.reference?.number == 5459)

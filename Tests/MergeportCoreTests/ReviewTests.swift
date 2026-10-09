@@ -3,6 +3,92 @@ import Foundation
 import Testing
 
 struct ReviewTests {
+    private func request(
+        _ id: String, reviewer: String, actor: String = "you", seconds: TimeInterval = 0,
+        kind: ConversationEvent.ReviewRequest.Kind = .requested
+    ) -> ConversationEvent {
+        let request = ConversationEvent.ReviewRequest(kind: kind, reviewer: reviewer)
+        return ConversationEvent(
+            id: id, actor: actor, action: request.action(reviewers: [reviewer]),
+            date: Date(timeIntervalSince1970: seconds), symbol: kind == .requested ? "eye" : "eye.slash",
+            reviewRequest: request)
+    }
+
+    private func conversation(_ events: [ConversationEvent]) -> [ConversationItem] {
+        var details = DemoReview.details(for: DemoInbox.snapshot.pullRequests[0])
+        details.events = events
+        return details.conversation.filter { item in
+            switch item {
+            case .event, .reviewRequests: true
+            default: false
+            }
+        }
+    }
+
+    @Test func adjacentReviewRequestsCollapseWithAllReviewersAndStableIdentity() throws {
+        let events = [
+            request("a", reviewer: "aaronfeingold"),
+            request("b", reviewer: "eblake1", actor: "You", seconds: 1),
+            request("c", reviewer: "aaronfeingold", seconds: 2),
+        ]
+        let items = conversation(events)
+        #expect(items.count == 1)
+        let item = try #require(items.first)
+        #expect(item.id == "review-requests-a")
+        #expect(item.date == events[0].date)
+        #expect(item.reviewRequestAction == "requested review from aaronfeingold and eblake1")
+        if case .reviewRequests(let group) = item {
+            #expect(group.map(\.id) == ["a", "b", "c"])
+        } else { Issue.record("Expected grouped review requests") }
+        #expect(conversation(Array(events.reversed())).map(\.id) == items.map(\.id))
+    }
+
+    @Test func groupingDoesNotChainAcrossMinutesOrMixActorsAndActions() {
+        let items = conversation([
+            request("a", reviewer: "alex"),
+            request("b", reviewer: "sam", seconds: 60),
+            request("c", reviewer: "lee", seconds: 61),
+            request("d", reviewer: "pat", actor: "someone-else", seconds: 62),
+            request("e", reviewer: "pat", seconds: 63, kind: .removed),
+            request("f", reviewer: "alex", seconds: 64, kind: .removed),
+        ])
+        #expect(items.count == 4)
+        #expect(items.last?.reviewRequestAction == "removed a review request for pat and alex")
+    }
+
+    @Test func interveningTimelineActivityAndUnknownReviewersStaySeparate() throws {
+        let first = request("a", reviewer: "alex")
+        let second = request("c", reviewer: "sam", seconds: 2)
+        let intervening = ConversationEvent(
+            id: "b", actor: "you", action: "marked this PR ready for review",
+            date: Date(timeIntervalSince1970: 1))
+        #expect(conversation([first, intervening, second]).count == 3)
+        let unknown = ConversationEvent(
+            id: "unknown", actor: "you", action: "requested review from a reviewer",
+            date: Date(timeIntervalSince1970: 1), symbol: "eye")
+        #expect(conversation([first, unknown, second]).count == 3)
+        let original = DemoReview.details(for: DemoInbox.snapshot.pullRequests[0])
+        let details = ReviewDetails(
+            pr: original.pr, viewer: original.viewer, body: "", headSHA: original.headSHA,
+            files: [], comments: [
+                DiscussionComment(id: "comment", databaseID: nil, author: "alex", body: "Wait",
+                    date: Date(timeIntervalSince1970: 1), url: nil)
+            ], reviews: [], threads: [], checks: [], commits: [], mergeMethods: [],
+            canUpdate: false, canWrite: false, notices: [], events: [first, second])
+        #expect(details.conversation.filter {
+            if case .reviewRequests = $0 { true } else { false }
+        }.count == 2)
+    }
+
+    @Test func reviewerListsSupportTeamsBotsAndThreeNames() {
+        let items = conversation([
+            request("a", reviewer: "copilot-pull-request-reviewer"),
+            request("b", reviewer: "platform-team", seconds: 1),
+            request("c", reviewer: "alex", seconds: 2),
+        ])
+        #expect(items.first?.reviewRequestAction == "requested review from Copilot, platform-team and alex")
+    }
+
     private func fragments(_ text: String, _ ranges: [Range<Int>]) -> [String] {
         let characters = Array(text)
         return ranges.map { String(characters[$0]) }

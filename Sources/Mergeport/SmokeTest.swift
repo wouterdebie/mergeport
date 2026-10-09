@@ -484,6 +484,11 @@ enum SmokeTest {
         }
         let review = model.reviewModel(for: tab)
         await review.load(force: true)
+        guard let requests = review.details?.conversation.first(where: { $0.reviewRequestAction != nil }),
+          case .reviewRequests(let events) = requests, events.count == 2,
+          requests.reviewRequestAction == "requested review from Copilot and platform-team"
+        else { throw MergeportError.message("Related reviewer requests did not collapse into one timeline row.") }
+        print("PASS: adjacent reviewer requests render as one timeline entry with every reviewer.")
         if let html = review.details?.bodyHTML {
           review.details?.bodyHTML = html + "<script>window.mergeportUntrustedScript = true;</script>"
         }
@@ -535,6 +540,12 @@ enum SmokeTest {
         try await Task.sleep(for: .milliseconds(300))
         guard scrollView.contentView.bounds.origin.y > previousOffset else {
           throw MergeportError.message("Scrolling over an HTML body did not move the conversation timeline.")
+        }
+        if let view = scrollView.window?.contentView,
+          let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+          view.cacheDisplay(in: view.bounds, to: bitmap)
+          try bitmap.representation(using: .png, properties: [:])?.write(
+            to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-timeline-grouping.png")))
         }
         for _ in 0..<6 { scrollView.scrollWheel(with: event) }
         try await Task.sleep(for: .milliseconds(400))

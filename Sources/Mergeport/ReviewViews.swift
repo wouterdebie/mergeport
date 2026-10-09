@@ -455,6 +455,12 @@ struct NativeReviewView: View {
                 }
               }
             }
+          case .reviewRequests(let events):
+            if let first = events.first, let action = item.reviewRequestAction {
+              timelineRow(author: nil, symbol: first.symbol) {
+                eventLine(author: first.actor, action: action, date: first.date)
+              }
+            }
           case .references(let events):
             timelineRow(author: nil, symbol: "arrow.up.forward.square") {
               VStack(alignment: .leading, spacing: 8) {
