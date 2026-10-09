@@ -3,6 +3,7 @@ import Foundation
 public struct GitHubClient: Sendable {
   private let token: String
   private let session: URLSession
+  private let rateLimit = GitHubRateLimit.shared
 
   public init(token: String, session: URLSession = .shared) {
     self.token = token
@@ -309,6 +310,7 @@ public struct GitHubClient: Sendable {
   private func performQuery<T: Decodable>(_ query: String, variables: [String: JSONValue])
     async throws -> T
   {
+    try await rateLimit.check(token: token, resource: "graphql")
     var request = URLRequest(url: URL(string: "https://api.github.com/graphql")!)
     request.httpMethod = "POST"
     request.timeoutInterval = 60
@@ -321,6 +323,9 @@ public struct GitHubClient: Sendable {
       throw MergeportError.message("GitHub returned an invalid HTTP response.")
     }
     if http.statusCode == 401 { throw MergeportError.unauthorized }
+    if let limited = await rateLimit.observe(token: token, resource: "graphql", response: http, data: data) {
+      throw limited
+    }
     guard (200..<300).contains(http.statusCode) else {
       if http.statusCode == 403 || http.statusCode == 429 {
         throw MergeportError.message(
@@ -1078,6 +1083,7 @@ extension GitHubClient {
   private func restResponse(_ path: String, method: String = "GET", body: Data? = nil) async throws
     -> (Data, Int)
   {
+    try await rateLimit.check(token: token, resource: "core")
     guard let url = URL(string: "https://api.github.com\(path)"), url.host == "api.github.com"
     else {
       throw MergeportError.message("Invalid GitHub API path.")
@@ -1094,6 +1100,9 @@ extension GitHubClient {
     let (data, response) = try await session.data(for: request)
     guard let http = response as? HTTPURLResponse else {
       throw MergeportError.message("GitHub returned an invalid response.")
+    }
+    if let limited = await rateLimit.observe(token: token, resource: "core", response: http, data: data) {
+      throw limited
     }
     if http.statusCode == 401 { throw MergeportError.unauthorized }
     return (data, http.statusCode)

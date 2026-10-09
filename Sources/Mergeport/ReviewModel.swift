@@ -61,8 +61,10 @@ final class ReviewModel: ObservableObject {
     private var conflictRevision: String?
     private var conflictTask: Task<Void, Never>?
     private var conflictTaskID: UUID?
-    private var diffRevision = UUID()
+    private(set) var diffRevision = UUID()
     private var lastLoaded: Date?
+    private var lastPreloadAttempt: Date?
+    private var loadedUpdatedAt: Date?
     private var loadTask: Task<Void, Never>?
     var diffLayoutMeasurements: [String: CGFloat] = [:]
 
@@ -76,6 +78,13 @@ final class ReviewModel: ObservableObject {
     }
 
     private static func mergeMethodKey(_ repository: String) -> String { "mergeMethod.\(repository.lowercased())" }
+
+    func preload(_ pr: PullRequest) async {
+        guard details == nil || loadedUpdatedAt != pr.updatedAt else { return }
+        if let lastPreloadAttempt, Date.now.timeIntervalSince(lastPreloadAttempt) < 120 { return }
+        lastPreloadAttempt = .now
+        await load(force: true)
+    }
 
     var pr: PullRequest { details?.pr ?? reference }
     var isDemo: Bool { app?.isDemo == true }
@@ -148,6 +157,7 @@ final class ReviewModel: ObservableObject {
             }
             details = fresh
             lastLoaded = .now
+            loadedUpdatedAt = fresh.pr.updatedAt
             if !fresh.files.contains(where: { $0.filename == selectedFile }) { selectedFile = FileTree.orderedFilenames(fresh.files).first }
             if !fresh.mergeMethods.contains(mergeMethod), let method = fresh.mergeMethods.first { mergeMethod = method }
             app.updateReviewTab(fresh.pr, tabID: reference.id)

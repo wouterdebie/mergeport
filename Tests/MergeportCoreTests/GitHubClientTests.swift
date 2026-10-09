@@ -85,6 +85,20 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite(.serialized)
 struct GitHubClientTests {
+  @Test func graphQLRateLimitStopsNewClientsBeforeSendingRequests() async throws {
+    let http = session([try Reply(["errors": [
+      ["type": "RATE_LIMIT", "message": "API rate limit exceeded for user ID 172038."]
+    ]])])
+    defer { http.invalidateAndCancel() }
+    let token = UUID().uuidString
+    await #expect(throws: GitHubRateLimitError.self) {
+      try await GitHubClient(token: token, session: http).viewer()
+    }
+    await #expect(throws: GitHubRateLimitError.self) {
+      try await GitHubClient(token: token, session: http).viewer()
+    }
+    #expect(StubProtocol.state.requests.count == 1)
+  }
   @Test func checkRequirementsArePRScopedAndPreservedAcrossPages() async throws {
     func page(required: Bool, next: Bool) throws -> Reply {
       let cursor: Any = next ? "next-page" : NSNull()

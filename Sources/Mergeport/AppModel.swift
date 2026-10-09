@@ -268,9 +268,7 @@ final class AppModel: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(5)) } catch { return }
                 guard let self else { return }
-                // Running checks resolve in minutes; poll faster so their outcome shows up promptly.
-                let running = pullRequests.contains { $0.state == "OPEN" && $0.checks == .pending }
-                let interval = Double(running ? min(refreshInterval, 30) : refreshInterval)
+                let interval = Double(refreshInterval)
                 let last = max(lastAttempt, lastRefreshed ?? .distantPast)
                 guard Date.now.timeIntervalSince(last) >= interval, mainWindowActive || showStatusPanel else { continue }
                 lastAttempt = .now
@@ -952,7 +950,7 @@ final class AppModel: ObservableObject {
         guard let tab = activeTab else { return }
         let review = reviewModel(for: tab)
         review.section = ReviewSection(rawValue: tab.location.lastPathComponent) ?? .conversation
-        Task { await review.load(force: true) }
+        Task { await review.load() }
     }
 
     func preloadReviews() {
@@ -986,7 +984,7 @@ final class AppModel: ObservableObject {
             let tab = tabs.first(where: {
                 $0.pr.repository.lowercased() == pr.repository.lowercased() && $0.pr.number == pr.number
             }) ?? ReviewTab(pr: pr, location: pr.url)
-            await reviewModel(for: tab).load(force: true)
+            await reviewModel(for: tab).preload(pr)
         }
     }
 

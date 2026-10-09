@@ -73,6 +73,11 @@ enum SmokeTest {
           throw MergeportError.message(
             "Background preloading did not populate every inbox review and its parsed diffs.")
         }
+        let revision = cached.diffRevision
+        await cached.preload(cached.pr)
+        guard cached.diffRevision == revision else {
+          throw MergeportError.message("Preloading an unchanged PR unnecessarily fetched its review again.")
+        }
         model.open(cached.pr)
         guard let tab = model.activeTab, model.reviewModel(for: tab) === cached,
           cached.details != nil

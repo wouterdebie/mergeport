@@ -146,6 +146,13 @@ indicator. Cached reviews are kept in memory for the current app session.
   filter, a global ⌃⌥⌘P hotkey, fading while idle and hiding while Mergeport
   is in front. While the panel is visible, polling continues after the main
   window is closed or in the background.
+- **API usage**: the inbox follows the configured refresh interval even when
+  checks are running; only the selected PR's running checks poll more frequently.
+  Background review preloading skips unchanged PRs, and tab selection reuses
+  recently loaded reviews. GitHub rate-limit responses pause new requests for
+  that account and API resource until the reported reset time (or a cooldown
+  when no reset is supplied); secondary limits honor `Retry-After`. The error
+  shows when to retry, and cached PR content remains available.
 - **Preview**: sample inbox and interactive native review drafts without any
   GitHub requests or writes.
 
