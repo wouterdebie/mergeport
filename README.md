@@ -153,6 +153,8 @@ indicator. Cached reviews are kept in memory for the current app session.
   that account and API resource until the reported reset time (or a cooldown
   when no reset is supplied); secondary limits honor `Retry-After`. The error
   shows when to retry, and cached PR content remains available.
+  If a review has not loaded, its failed-load view keeps the PR header visible,
+  displays the actual error and offers Retry or Open on GitHub.
 - **Preview**: sample inbox and interactive native review drafts without any
   GitHub requests or writes.
 

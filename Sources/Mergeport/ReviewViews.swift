@@ -28,10 +28,10 @@ struct NativeReviewView: View {
 
   var body: some View {
     VStack(spacing: 0) {
-      header
+      header.fixedSize(horizontal: false, vertical: true)
       Divider()
       if review.isLoading { ProgressView().progressViewStyle(.linear).frame(height: 2) }
-      if let error = review.error { message(error, color: .orange) }
+      if review.details != nil, let error = review.error { message(error, color: .orange) }
       if let notice = review.notice { message(notice, color: .green) }
       if review.draftIsStale {
         message(
@@ -62,14 +62,22 @@ struct NativeReviewView: View {
       } else if review.isLoading {
         ProgressView("Loading PR review").frame(maxWidth: .infinity, maxHeight: .infinity)
       } else {
-        ContentUnavailableView(
-          "Could not load this review", systemImage: "exclamationmark.triangle",
-          description: Text("Connect GitHub and check repository access, then refresh.")
-        )
-        .fixedSize(horizontal: false, vertical: true).padding(.top, 24)
-        Spacer()
+        ScrollView {
+          VStack(spacing: 14) {
+            Image(systemName: "exclamationmark.triangle").font(.largeTitle).foregroundStyle(.orange)
+            Text("Could not load this review").font(.title2.bold())
+            Text(review.error ?? "The review has not loaded yet. Refresh to try again.")
+              .foregroundStyle(.secondary).multilineTextAlignment(.center).textSelection(.enabled)
+            HStack {
+              Button("Retry") { Task { await review.load(force: true) } }
+              Button("Open on GitHub") { app.openExternal(review.pr.url) }.disabled(review.isDemo)
+            }
+          }.padding(24).frame(maxWidth: 600)
+            .frame(maxWidth: .infinity).padding(.top, 36)
+        }.frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
     .background(Color(nsColor: .windowBackgroundColor))
     .task(id: review.conflictKey) { await review.loadConflictingFiles() }
     .task(id: review.reference.id) {

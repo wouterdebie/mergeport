@@ -422,6 +422,20 @@ enum SmokeTest {
           "PASS: every rendered diff row fills the \(viewport)-point viewport; intraline spans are present."
         )
         print("PASS: native diff, line anchors, retained review drafts and close-tab confirmation.")
+        if args.contains("--smoke-review-error"), let original = review.details {
+          review.details = nil
+          review.error = "GitHub API rate limit reached. Requests are paused until 3:00 PM. Cached PRs remain available."
+          try await Task.sleep(for: .milliseconds(400))
+          guard let view = window.contentView,
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+          else { throw MergeportError.message("Cannot capture the failed-review layout.") }
+          view.cacheDisplay(in: view.bounds, to: bitmap)
+          try bitmap.representation(using: .png, properties: [:])?.write(
+            to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-review-error.png")))
+          review.details = original
+          review.error = nil
+          print("PASS: failed reviews show their actual error with retry and browser fallback.")
+        }
         if args.contains("--smoke-required-checks"), let original = review.details {
           var required = original
           required.checks = [
