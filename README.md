@@ -155,6 +155,8 @@ indicator. Cached reviews are kept in memory for the current app session.
   shows when to retry, and cached PR content remains available.
   If a review has not loaded, its failed-load view keeps the PR header visible,
   displays the actual error and offers Retry or Open on GitHub.
+  Cancelling background reads when switching views does not show an error banner.
+  Cancelled GitHub checks and uncertain submissions still remain visible.
 - **Preview**: sample inbox and interactive native review drafts without any
   GitHub requests or writes.
 

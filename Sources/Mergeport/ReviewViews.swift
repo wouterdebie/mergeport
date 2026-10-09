@@ -82,7 +82,8 @@ struct NativeReviewView: View {
     .task(id: review.conflictKey) { await review.loadConflictingFiles() }
     .task(id: review.reference.id) {
       while !Task.isCancelled {
-        try? await Task.sleep(for: .seconds(15))
+        do { try await Task.sleep(for: .seconds(15)) } catch { return }
+        guard !Task.isCancelled else { return }
         if review.hasRunningChecks { await review.refreshChecks() }
       }
     }

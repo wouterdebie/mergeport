@@ -162,7 +162,7 @@ final class ReviewModel: ObservableObject {
             if !fresh.mergeMethods.contains(mergeMethod), let method = fresh.mergeMethods.first { mergeMethod = method }
             app.updateReviewTab(fresh.pr, tabID: reference.id)
             error = nil
-        } catch is CancellationError {
+        } catch where RequestCancellation.matches(error) {
             return
         } catch {
             guard app.accountSessionID == generation else { return }
@@ -250,7 +250,7 @@ final class ReviewModel: ObservableObject {
             guard revision == diffRevision, generation == app.accountSessionID else { return }
             try context.expand(gap: gap, direction: direction)
             diffContexts[path] = context
-        } catch is CancellationError {
+        } catch where RequestCancellation.matches(error) {
             return
         } catch {
             guard revision == diffRevision, generation == app.accountSessionID else { return }
@@ -265,13 +265,14 @@ final class ReviewModel: ObservableObject {
         do {
             let checks = try await app.githubClient().checks(
                 repository: reference.repository, sha: details.headSHA, number: reference.number)
+            try Task.checkCancellation()
             guard app.accountSessionID == generation, self.details?.headSHA == details.headSHA else { return }
             self.details?.checks = checks
             if let index = self.details?.commits.firstIndex(where: { $0.id == details.headSHA }) {
                 self.details?.commits[index].checks = checks
             }
             if CheckSummary(checks).pending == 0 { await load(force: true) }
-        } catch is CancellationError {
+        } catch where RequestCancellation.matches(error) {
             return
         } catch {
             guard app.accountSessionID == generation, self.details?.headSHA == details.headSHA else { return }

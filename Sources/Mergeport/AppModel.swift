@@ -391,7 +391,7 @@ final class AppModel: ObservableObject {
             refreshActiveReview()
             preloadReviews()
             refreshLinear()
-        } catch is CancellationError {
+        } catch where RequestCancellation.matches(error) {
             return
         } catch {
             guard generation == currentGeneration else { return }
