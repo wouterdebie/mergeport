@@ -7,8 +7,21 @@ enum MergeportLogo {
 
     static func template(height: CGFloat) -> NSImage {
         let size = NSSize(width: (height * bounds.width / bounds.height).rounded(), height: height)
-        let image = NSImage(size: size, flipped: true) { rect in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+        let image = NSImage(size: size)
+        for resolution in [1, 2] {
+            let pixelsWide = Int(size.width) * resolution
+            let pixelsHigh = Int(size.height) * resolution
+            let rep = NSBitmapImageRep(
+                bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
+                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+            rep.size = size
+            let graphics = NSGraphicsContext(bitmapImageRep: rep)!
+            let context = graphics.cgContext
+            context.scaleBy(x: CGFloat(resolution), y: CGFloat(resolution))
+            context.translateBy(x: 0, y: size.height)
+            context.scaleBy(x: 1, y: -1)
+            let rect = CGRect(origin: .zero, size: size)
             let scale = min(rect.width / bounds.width, rect.height / bounds.height)
             context.translateBy(
                 x: rect.midX - bounds.midX * scale, y: rect.midY - bounds.midY * scale)
@@ -19,7 +32,7 @@ enum MergeportLogo {
             context.setBlendMode(.clear)
             context.addPath(holes)
             context.fillPath()
-            return true
+            image.addRepresentation(rep)
         }
         image.isTemplate = true
         image.accessibilityDescription = "Mergeport"

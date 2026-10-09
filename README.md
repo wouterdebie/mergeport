@@ -140,7 +140,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   requested, conflicts, failed checks, ready to merge, Copilot finished, new
   threads. Click a row to open it in Mergeport; ⌥-click opens it on GitHub.
   A menu bar item shows how many PRs need you and toggles the panel;
-  right-click it for more options. Settings → General → Status panel offers a
+  its logo uses macOS's automatic menu-bar coloring, independent of unseen
+  updates (shown in the tooltip and panel). Right-click it for more options.
+  Settings → General → Status panel offers a
   filter, a global ⌃⌥⌘P hotkey, fading while idle and hiding while Mergeport
   is in front. While the panel is visible, polling continues after the main
   window is closed or in the background.

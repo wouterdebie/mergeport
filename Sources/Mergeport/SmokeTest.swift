@@ -665,6 +665,8 @@ enum SmokeTest {
       }
       if args.contains("--smoke-status-panel") {
         let wasShowing = model.showStatusPanel
+        let wasShowingMenuBar = model.showMenuBarItem
+        model.showMenuBarItem = true
         model.resetDemoChanges()
         model.showStatusPanel = true
         try await Task.sleep(for: .milliseconds(600))
@@ -677,6 +679,28 @@ enum SmokeTest {
         guard model.unseenChanges.count == DemoInbox.changes.count else {
           throw MergeportError.message("Status panel updates were not loaded.")
         }
+        guard let button = StatusPanelController.shared.statusItem?.button,
+          button.image?.isTemplate == true, button.contentTintColor == nil,
+          let representations = button.image?.representations as? [NSBitmapImageRep],
+          representations.count == 2,
+          representations.allSatisfy({ rep in
+            (0..<rep.pixelsHigh).contains { y in
+              (0..<rep.pixelsWide).contains { x in
+                (rep.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.5
+              }
+            }
+          })
+        else { throw MergeportError.message("Menu bar logo must use a rasterized system-colored template.") }
+        for pr in model.pullRequests where model.unseenChanges[pr.id] != nil {
+          model.open(pr)
+          model.closeTab(pr.id)
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        guard button.contentTintColor == nil, button.image?.isTemplate == true else {
+          throw MergeportError.message("Menu bar logo changed color mode after clearing updates.")
+        }
+        print("PASS: menu bar uses visible 1x/2x raster templates and automatic coloring with and without updates.")
+        model.resetDemoChanges()
         panelContent.layoutSubtreeIfNeeded()
         if let bitmap = panelContent.bitmapImageRepForCachingDisplay(in: panelContent.bounds) {
           panelContent.cacheDisplay(in: panelContent.bounds, to: bitmap)
@@ -698,6 +722,7 @@ enum SmokeTest {
         try await Task.sleep(for: .milliseconds(200))
         guard !panel.isVisible else { throw MergeportError.message("The status panel did not hide.") }
         model.showStatusPanel = wasShowing
+        model.showMenuBarItem = wasShowingMenuBar
         let windowsBefore = Set(NSApp.windows.filter(\.isVisible).map(ObjectIdentifier.init))
         StatusPanelController.shared.openSettings()
         try await Task.sleep(for: .milliseconds(800))

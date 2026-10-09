@@ -11,7 +11,7 @@ final class StatusPanelController: NSObject, NSWindowDelegate, NSMenuDelegate {
     static let panelTitle = "Mergeport Status"
 
     private(set) var panel: NSPanel?
-    private var statusItem: NSStatusItem?
+    private(set) var statusItem: NSStatusItem?
     private var hotKey: GlobalHotKey?
     private var cancellables = Set<AnyCancellable>()
     private var updateScheduled = false
@@ -133,8 +133,6 @@ final class StatusPanelController: NSObject, NSWindowDelegate, NSMenuDelegate {
         var help = count == 1 ? "1 pull request needs you" : "\(count) pull requests need you"
         if unseen > 0 { help += unseen == 1 ? " · 1 update" : " · \(unseen) updates" }
         item.button?.toolTip = help + "\nClick to toggle the status panel; right-click for more."
-        // Tinted while there are updates you haven't seen.
-        item.button?.contentTintColor = unseen > 0 ? .controlAccentColor : nil
     }
 
     private func makeStatusItem() -> NSStatusItem {
