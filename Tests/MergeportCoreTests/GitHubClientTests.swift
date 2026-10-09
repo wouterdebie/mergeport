@@ -85,6 +85,43 @@ private final class StubProtocol: URLProtocol, @unchecked Sendable {
 
 @Suite(.serialized)
 struct GitHubClientTests {
+  @Test func checkRequirementsArePRScopedAndPreservedAcrossPages() async throws {
+    func page(required: Bool, next: Bool) throws -> Reply {
+      let cursor: Any = next ? "next-page" : NSNull()
+      return try Reply(["data": ["repository": ["object": ["statusCheckRollup": ["contexts": [
+        "pageInfo": ["hasNextPage": next, "endCursor": cursor],
+        "nodes": next ? [
+          ["databaseId": 1, "name": "Tests", "status": "COMPLETED", "conclusion": "FAILURE",
+           "isRequired": required],
+          ["databaseId": 2, "name": "Tests", "status": "IN_PROGRESS", "isRequired": required],
+        ] : [
+          ["id": "status", "context": "deploy", "state": "PENDING", "isRequired": required]
+        ],
+      ]]]]]])
+    }
+    let http = session([
+      try page(required: false, next: true), try page(required: false, next: false),
+      try page(required: true, next: true), try page(required: true, next: false),
+    ])
+    defer { http.invalidateAndCancel() }
+    let client = GitHubClient(token: "fixture-token", session: http)
+    let staging = try await client.checks(repository: "acme/app", sha: "shared-head", number: 1)
+    let main = try await client.checks(repository: "acme/app", sha: "shared-head", number: 2)
+    #expect(staging.map(\.id) == ["check-2", "status-status"])
+    #expect(staging.allSatisfy { $0.isRequired == false })
+    #expect(main.allSatisfy { $0.isRequired == true })
+    for (index, request) in StubProtocol.state.requests.enumerated() {
+      let data = try #require(request.httpBody)
+      let body = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+      let variables = try #require(body["variables"] as? [String: Any])
+      #expect(variables["number"] as? Int == (index < 2 ? 1 : 2))
+      #expect(variables["oid"] as? String == "shared-head")
+      #expect((body["query"] as? String)?.contains("isRequired(pullRequestNumber: $number)") == true)
+      if index.isMultiple(of: 2) { #expect(variables["cursor"] == nil) }
+      else { #expect(variables["cursor"] as? String == "next-page") }
+    }
+  }
+
   @Test func contextFileTextUsesPinnedCommitAndGraphQLVariables() async throws {
     let http = session([try Reply(["data": ["repository": [
       "object": ["text": "hello\n", "isBinary": false]
@@ -318,6 +355,7 @@ struct GitHubClientTests {
       repository: "acme/app", sha: "abc")
     #expect(checks.map(\.id) == ["check-3", "check-4", "check-5", "status-S1"])
     #expect(checks.first?.state == "success")
+    #expect(checks.allSatisfy { $0.isRequired == nil })
   }
 
   @Test func reviewThreadsArePaginatedBeforeClassifyingReadiness() async throws {
@@ -703,9 +741,9 @@ struct GitHubClientTests {
                 "nodes": [
                   [
                     "databaseId": 9, "name": "Tests", "status": "COMPLETED",
-                    "conclusion": "SUCCESS", "detailsUrl": NSNull(),
+                    "conclusion": "SUCCESS", "detailsUrl": NSNull(), "isRequired": true,
                   ],
-                  ["id": "S1", "context": "deploy", "state": "PENDING", "targetUrl": NSNull()],
+                  ["id": "S1", "context": "deploy", "state": "PENDING", "targetUrl": NSNull(), "isRequired": false],
                 ],
               ]
             ]
@@ -811,6 +849,8 @@ struct GitHubClientTests {
     #expect(details.comments.first?.body == "Looks good")
     #expect(details.bodyHTML == "<h2>Summary</h2>")
     #expect(details.baseSHA == "base-commit")
+    #expect(details.checks.first?.isRequired == true)
+    #expect(details.checks.last?.isRequired == false)
     #expect(details.comments.first?.bodyHTML == "<p>Looks good</p>")
     #expect(details.events.count == 4)
     #expect(details.events[1].action == "requested review from alex")

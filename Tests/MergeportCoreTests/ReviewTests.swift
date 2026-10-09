@@ -3,6 +3,24 @@ import Foundation
 import Testing
 
 struct ReviewTests {
+    @Test func requiredCheckSummaryDistinguishesBlockersFromOptionalFailures() {
+        var details = DemoReview.details(for: DemoInbox.snapshot.pullRequests[0])
+        details.checks = [
+            PullRequestCheck(id: "required-pending", name: "Tests", state: "in_progress", url: nil, isRequired: true),
+            PullRequestCheck(id: "required-failure", name: "Deploy", state: "failure", url: nil, isRequired: true),
+            PullRequestCheck(id: "optional", name: "Slack", state: "failure", url: nil, isRequired: false),
+        ]
+        #expect(details.requiredChecksDetail == "Waiting on required checks · 1 required in progress · 1 required failing")
+        details.checks.removeFirst()
+        details.checks.removeFirst()
+        #expect(details.requiredChecksDetail == "None of the reported checks are required")
+        details.checks = [PullRequestCheck(id: "unknown", name: "Tests", state: "pending", url: nil)]
+        #expect(details.requiredChecksDetail == "Required status unavailable for some checks")
+        details.checks = [PullRequestCheck(id: "passed", name: "Tests", state: "success", url: nil, isRequired: true)]
+        #expect(details.requiredChecksDetail == "All 1 reported required checks passed or were skipped")
+        details.checks = []
+        #expect(details.requiredChecksDetail.isEmpty)
+    }
     private func request(
         _ id: String, reviewer: String, actor: String = "you", seconds: TimeInterval = 0,
         kind: ConversationEvent.ReviewRequest.Kind = .requested

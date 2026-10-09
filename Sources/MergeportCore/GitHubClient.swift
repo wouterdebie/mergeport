@@ -690,7 +690,7 @@ extension GitHubClient {
       person.login.map { RESTUser(login: $0, avatarUrl: person.avatarUrl) }
     }
     async let threads = nativeThreads(prID: prID)
-    async let checks = checksResult(repository: name, sha: headOid)
+    async let checks = checksResult(repository: name, sha: headOid, number: number)
     async let commitInfo = (try? await commitChecks(prID: prID)) ?? [:]
     let node = info.node
     let viewerLogin = meta.viewer.login
@@ -1196,21 +1196,21 @@ extension GitHubClient {
   private static let threadCommentFields =
     "id databaseId body bodyHTML createdAt url author { login avatarUrl }"
 
-  private func checksResult(repository: String, sha: String) async -> Result<
+  private func checksResult(repository: String, sha: String, number: Int) async -> Result<
     [PullRequestCheck], Error
   > {
-    do { return .success(try await nativeChecks(repository: repository, sha: sha)) } catch {
+    do { return .success(try await nativeChecks(repository: repository, sha: sha, number: number)) } catch {
       return .failure(error)
     }
   }
 
   /// Uses GraphQL's status check rollup: REST check-runs/status endpoints can return HTTP 500
   /// for commits that GraphQL serves fine.
-  public func checks(repository: String, sha: String) async throws -> [PullRequestCheck] {
-    try await nativeChecks(repository: repository, sha: sha)
+  public func checks(repository: String, sha: String, number: Int? = nil) async throws -> [PullRequestCheck] {
+    try await nativeChecks(repository: repository, sha: sha, number: number)
   }
 
-  private func nativeChecks(repository: String, sha: String) async throws -> [PullRequestCheck] {
+  private func nativeChecks(repository: String, sha: String, number: Int? = nil) async throws -> [PullRequestCheck] {
     struct Contexts: Decodable {
       let pageInfo: PageInfo
       let nodes: [CheckContext?]
@@ -1227,14 +1227,15 @@ extension GitHubClient {
         "owner": .string(String(parts[0])), "name": .string(String(parts[1])), "oid": .string(sha),
       ]
       if let cursor { variables["cursor"] = .string(cursor) }
+      if let number { variables["number"] = .integer(number) }
       let result: Result = try await query(
         """
-        query($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String) {
+        query($owner: String!, $name: String!, $oid: GitObjectID!, $cursor: String\(number == nil ? "" : ", $number: Int!")) {
           repository(owner: $owner, name: $name) {
             object(oid: $oid) { ... on Commit { statusCheckRollup {
               contexts(first: 100, after: $cursor) {
                 pageInfo { hasNextPage endCursor }
-                nodes { \(CheckContext.fields) }
+                nodes { \(CheckContext.fields(requiredFor: number == nil ? nil : "pullRequestNumber: $number")) }
               }
             } } }
           }
@@ -1266,7 +1267,7 @@ extension GitHubClient {
       query($id: ID!) {
         node(id: $id) { ... on PullRequest { commits(last: 100) { nodes { commit {
           oid signature { isValid }
-          statusCheckRollup { contexts(first: 50) { nodes { \(CheckContext.fields) } } }
+          statusCheckRollup { contexts(first: 50) { nodes { \(CheckContext.fields(requiredFor: "pullRequestId: $id")) } } }
         } } } } }
       }
       """, variables: ["id": .string(prID)])
@@ -1282,11 +1283,14 @@ extension GitHubClient {
 }
 
 private struct CheckContext: Decodable {
-  static let fields = """
+  static func fields(requiredFor argument: String? = nil) -> String {
+    let required = argument.map { "isRequired(\($0))" } ?? ""
+    return """
     ... on CheckRun { databaseId name status conclusion detailsUrl startedAt completedAt title
-      checkSuite { workflowRun { event workflow { name } } } }
-    ... on StatusContext { id context state targetUrl description createdAt }
+      \(required) checkSuite { workflowRun { event workflow { name } } } }
+    ... on StatusContext { id context state targetUrl description createdAt \(required) }
     """
+  }
   struct Workflow: Decodable { let name: String }
   struct Run: Decodable {
     let event: String?
@@ -1308,6 +1312,7 @@ private struct CheckContext: Decodable {
   let targetUrl: URL?
   let description: String?
   let createdAt: Date?
+  let isRequired: Bool?
 
   /// A commit keeps every workflow run: each push, ready-for-review or review event adds another.
   /// Like GitHub's merge box, show only the newest run of each job per workflow and event.
@@ -1342,12 +1347,12 @@ private struct CheckContext: Decodable {
         id: "check-\(databaseId.map(String.init) ?? name)", name: name, state: state.lowercased(),
         url: detailsUrl, workflow: run?.workflow?.name, event: run?.event,
         startedAt: startedAt, completedAt: status?.uppercased() == "COMPLETED" ? completedAt : nil,
-        summary: title)
+        summary: title, isRequired: isRequired)
     }
     guard let context else { return nil }
     return PullRequestCheck(
       id: "status-\(id ?? context)", name: context, state: (state ?? "pending").lowercased(),
-      url: targetUrl, completedAt: createdAt, summary: description)
+      url: targetUrl, completedAt: createdAt, summary: description, isRequired: isRequired)
   }
 }
 

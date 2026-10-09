@@ -252,14 +252,21 @@ final class ReviewModel: ObservableObject {
     func refreshChecks() async {
         guard let app, !app.isDemo, let details, loadTask == nil else { return }
         let generation = app.accountSessionID
-        guard let checks = try? await app.githubClient().checks(
-            repository: reference.repository, sha: details.headSHA),
-              app.accountSessionID == generation, self.details?.headSHA == details.headSHA else { return }
-        self.details?.checks = checks
-        if let index = self.details?.commits.firstIndex(where: { $0.id == details.headSHA }) {
-            self.details?.commits[index].checks = checks
+        do {
+            let checks = try await app.githubClient().checks(
+                repository: reference.repository, sha: details.headSHA, number: reference.number)
+            guard app.accountSessionID == generation, self.details?.headSHA == details.headSHA else { return }
+            self.details?.checks = checks
+            if let index = self.details?.commits.firstIndex(where: { $0.id == details.headSHA }) {
+                self.details?.commits[index].checks = checks
+            }
+            if CheckSummary(checks).pending == 0 { await load(force: true) }
+        } catch is CancellationError {
+            return
+        } catch {
+            guard app.accountSessionID == generation, self.details?.headSHA == details.headSHA else { return }
+            report(error)
         }
-        if CheckSummary(checks).pending == 0 { await load(force: true) }
     }
 
     func selectSection(_ section: ReviewSection) {

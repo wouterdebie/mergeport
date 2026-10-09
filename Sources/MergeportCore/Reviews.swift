@@ -201,10 +201,12 @@ public struct PullRequestCheck: Identifiable, Sendable {
   public var startedAt: Date? = nil
   public var completedAt: Date? = nil
   public var summary: String? = nil
+  public var isRequired: Bool? = nil
 
   public init(
     id: String, name: String, state: String, url: URL?, workflow: String? = nil,
-    event: String? = nil, startedAt: Date? = nil, completedAt: Date? = nil, summary: String? = nil
+    event: String? = nil, startedAt: Date? = nil, completedAt: Date? = nil, summary: String? = nil,
+    isRequired: Bool? = nil
   ) {
     self.id = id
     self.name = name
@@ -215,6 +217,7 @@ public struct PullRequestCheck: Identifiable, Sendable {
     self.startedAt = startedAt
     self.completedAt = completedAt
     self.summary = summary
+    self.isRequired = isRequired
   }
 
   public var outcome: Outcome {
@@ -439,6 +442,26 @@ public struct ReviewDetails: Sendable {
   }
 
   public var checkSummary: CheckSummary { CheckSummary(checks) }
+
+  public var requiredChecksDetail: String {
+    guard !checks.isEmpty else { return "" }
+    let required = checks.filter { $0.isRequired == true }
+    let summary = CheckSummary(required)
+    var parts: [String] = []
+    if summary.pending > 0 { parts.append("\(summary.pending) required in progress") }
+    if summary.failed > 0 { parts.append("\(summary.failed) required failing") }
+    if !parts.isEmpty {
+      parts.insert("Waiting on required checks", at: 0)
+    } else if !required.isEmpty {
+      parts.append("All \(required.count) reported required checks passed or were skipped")
+    } else if checks.allSatisfy({ $0.isRequired == false }) {
+      parts.append("None of the reported checks are required")
+    }
+    if checks.contains(where: { $0.isRequired == nil }) {
+      parts.append("Required status unavailable for some checks")
+    }
+    return parts.joined(separator: " · ")
+  }
 
   /// Latest non-comment review state per reviewer, as GitHub uses for the merge box.
   public var latestReviewStates: [String: String] {

@@ -934,7 +934,9 @@ struct NativeReviewView: View {
               ? .failure
               : summary.pending > 0 ? .pending : summary.total == 0 ? .neutral : .success,
             title: summary.title,
-            detail: summary.detail + (review.pr.isMergeReady && (summary.failed > 0 || summary.pending > 0)
+            detail: summary.detail
+              + (details.requiredChecksDetail.isEmpty ? "" : ". " + details.requiredChecksDetail)
+              + (review.pr.isMergeReady && (summary.failed > 0 || summary.pending > 0)
               ? ". These checks do not block merging under GitHub's current rules." : ""),
             chevron: summary.total > 0, expanded: checksExpanded)
         }.buttonStyle(.plain).disabled(summary.total == 0)
@@ -1052,6 +1054,9 @@ struct NativeReviewView: View {
         VStack(alignment: .leading, spacing: 2) {
           Text(summary.title).font(.title3.bold())
           Text(summary.detail).foregroundStyle(.secondary)
+          if !details.requiredChecksDetail.isEmpty {
+            Text(details.requiredChecksDetail).font(.callout).foregroundStyle(.secondary)
+          }
         }
         if details.checks.isEmpty {
           Text("GitHub returned no check runs or commit statuses.").foregroundStyle(.secondary)
@@ -1845,6 +1850,12 @@ struct CheckRow: View {
         .font(.system(size: 12)).foregroundStyle(.secondary).frame(width: 18)
       Text(check.title).font(.callout.weight(.semibold)).lineLimit(1).truncationMode(.tail)
         .layoutPriority(1)
+      if check.isRequired == true {
+        Text("Required").font(.caption.weight(.medium))
+          .padding(.horizontal, 6).padding(.vertical, 2)
+          .overlay(Capsule().stroke(Color.primary.opacity(0.25)))
+          .fixedSize().help("GitHub requires this check for this pull request's target branch.")
+      }
       TimelineView(.periodic(from: .now, by: check.outcome == .pending ? 1 : 60)) { context in
         Text(check.status(now: context.date)).font(.callout).foregroundStyle(.secondary).lineLimit(1)
       }

@@ -318,7 +318,12 @@ mergeability and approved/not-required reviews. `UNSTABLE` means GitHub allows
 merging despite non-passing optional checks; `BLOCKED` still prevents merging,
 including when mandatory approvals or required checks are missing. Failed
 checks remain prominent in Needs attention and the checks list even when Merge
-is enabled. An approval alone is not enough. Merge requests include the exact loaded head SHA; GitHub rejects a
+is enabled. Check rows show a **Required** badge using GitHub's requirement for
+that specific PR, including in commit popovers. The merge box and Checks page
+summarize required checks still running or failing. This applies to reported
+check runs and commit statuses; checks that have not been reported are not
+inferred, and unavailable requirement information is shown explicitly.
+An approval alone is not enough. Merge requests include the exact loaded head SHA; GitHub rejects a
 changed head or unmet policies. Review submission also checks the current head
 and includes the reviewed commit ID. A failed network submission is not retried
 automatically: check GitHub before retrying if the outcome is uncertain.
@@ -448,6 +453,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 expansion, rendered line numbers, comment anchors and same-commit refreshes.
 `--smoke-merge-policy` with `--smoke-native-review` checks optional-failure
 warnings alongside merge eligibility, and mandatory approval and policy blocks.
+`--smoke-required-checks` with `--smoke-native-review` verifies the required-check
+summary and captures required badges alongside optional failures.
 `--smoke-conflicts` with `--smoke-native-review` checks the read-only conflicting
 file list, disabled Merge, and clearing paths when conflicts disappear.
 `--smoke-sidebar-inbox` checks full-inbox listing, closing an open review

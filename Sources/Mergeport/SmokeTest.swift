@@ -417,6 +417,30 @@ enum SmokeTest {
           "PASS: every rendered diff row fills the \(viewport)-point viewport; intraline spans are present."
         )
         print("PASS: native diff, line anchors, retained review drafts and close-tab confirmation.")
+        if args.contains("--smoke-required-checks"), let original = review.details {
+          var required = original
+          required.checks = [
+            PullRequestCheck(id: "required-tests", name: "Run Tests", state: "in_progress",
+              url: nil, workflow: "Test Suite", isRequired: true),
+            PullRequestCheck(id: "optional-slack", name: "Slack reaction", state: "failure",
+              url: nil, isRequired: false),
+          ]
+          review.details = required
+          review.selectSection(.checks)
+          guard required.requiredChecksDetail == "Waiting on required checks · 1 required in progress",
+            required.checks.filter({ $0.isRequired == true }).map(\.id) == ["required-tests"]
+          else { throw MergeportError.message("Required check blockers were not distinguished from optional checks.") }
+          try await Task.sleep(for: .milliseconds(400))
+          if let view = window.contentView,
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(
+              to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-required-checks.png")))
+          }
+          review.details = original
+          review.selectSection(.files)
+          print("PASS: required checks are identified separately from optional failures.")
+        }
         if args.contains("--smoke-merge-policy"), let original = review.details {
           var optional = original
           optional.pr.isDraft = false
