@@ -673,7 +673,8 @@ struct GitHubClientTests {
     let info = fixture(
       1,
       overrides: [
-        "body": "Summary", "bodyHTML": "<h2>Summary</h2>", "createdAt": "2026-10-06T10:00:00Z",
+        "body": "Summary", "baseRefOid": "base-commit",
+        "bodyHTML": "<h2>Summary</h2>", "createdAt": "2026-10-06T10:00:00Z",
         "changedFiles": 101, "viewerCanUpdate": true, "commitCount": ["totalCount": 1],
       ])
     func file(_ number: Int) -> [String: Any] {
@@ -805,6 +806,7 @@ struct GitHubClientTests {
     #expect(details.files.count == 101)
     #expect(details.comments.first?.body == "Looks good")
     #expect(details.bodyHTML == "<h2>Summary</h2>")
+    #expect(details.baseSHA == "base-commit")
     #expect(details.comments.first?.bodyHTML == "<p>Looks good</p>")
     #expect(details.events.count == 3)
     #expect(details.events[1].action == "requested review from alex")

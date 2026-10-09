@@ -359,6 +359,40 @@ enum SmokeTest {
           throw MergeportError.message("Switching tabs lost the native review draft.")
         }
         try await Task.sleep(for: .milliseconds(100))
+        await review.load(force: true)
+        if args.contains("--smoke-conflicts"), let original = review.details {
+          var conflict = original
+          conflict.pr.mergeable = "CONFLICTING"
+          conflict.pr.mergeState = "DIRTY"
+          review.details = conflict
+          review.selectSection(.conversation)
+          await review.loadConflictingFiles()
+          guard review.conflictingFiles == ["app/services/notification-rs/project.json"],
+            review.conflictError == nil, review.details?.canMerge == false
+          else { throw MergeportError.message(
+            "Conflicting files were not shown read-only with Merge disabled: paths=\(String(describing: review.conflictingFiles)), error=\(review.conflictError ?? "none"), mergeable=\(review.pr.mergeable), loading=\(review.isLoadingConflicts).") }
+          try await Task.sleep(for: .milliseconds(500))
+          guard let scrollView = webViews(in: content).first?.enclosingScrollView,
+            let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+              wheel1: -10000, wheel2: 0, wheel3: 0).flatMap(NSEvent.init(cgEvent:))
+          else { throw MergeportError.message("Cannot reveal the conflict merge box.") }
+          scrollView.scrollWheel(with: wheel)
+          try await Task.sleep(for: .milliseconds(400))
+          if let view = window.contentView,
+            let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(
+              to: URL(fileURLWithPath: args[flag + 1].replacingOccurrences(of: ".png", with: "-conflicts.png")))
+          }
+          scrollView.contentView.scroll(to: .zero)
+          review.details = original
+          await review.loadConflictingFiles()
+          guard review.conflictingFiles == nil, review.conflictError == nil else {
+            throw MergeportError.message("Conflict paths persisted after the conflict disappeared.")
+          }
+          review.selectSection(.files)
+          print("PASS: conflicting paths appear read-only, block Merge and clear when conflicts disappear.")
+        }
         try closeTabUsingShortcut(window: window)
         try await Task.sleep(for: .milliseconds(100))
         guard model.tabToClose?.id == tab.id, model.tabs.contains(where: { $0.id == tab.id }) else {

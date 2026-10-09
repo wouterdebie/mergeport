@@ -71,6 +71,7 @@ struct NativeReviewView: View {
       }
     }
     .background(Color(nsColor: .windowBackgroundColor))
+    .task(id: review.conflictKey) { await review.loadConflictingFiles() }
     .task(id: review.reference.id) {
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(15))
@@ -895,6 +896,7 @@ struct NativeReviewView: View {
     let changes = states.filter { $0 == "CHANGES_REQUESTED" }.count
     let summary = details.checkSummary
     let ready = details.canMerge
+    let hasConflicts = review.conflictKey != nil
     return HStack(alignment: .top, spacing: 14) {
       Image(systemName: "arrow.triangle.merge").font(.system(size: 15, weight: .semibold))
         .foregroundStyle(.white).frame(width: 32, height: 32)
@@ -937,16 +939,36 @@ struct NativeReviewView: View {
         }
         Divider()
         mergeSection(
-          status: review.pr.mergeable == "MERGEABLE"
-            ? .success : review.pr.mergeable == "CONFLICTING" ? .failure : .pending,
-          title: review.pr.mergeable == "CONFLICTING"
+          status: hasConflicts ? .failure : review.pr.mergeable == "MERGEABLE" ? .success : .pending,
+          title: hasConflicts
             ? "This branch has conflicts that must be resolved"
             : review.pr.mergeable == "MERGEABLE"
               ? "No conflicts with base branch" : "Checking for the ability to merge automatically…",
-          detail: review.pr.mergeable == "MERGEABLE"
-            ? "Merging can be performed automatically."
-            : review.pr.mergeable == "CONFLICTING"
-              ? "Resolve conflicts on GitHub or locally." : "GitHub is still computing mergeability.")
+          detail: hasConflicts ? "Conflicting files are listed below. Merging is blocked."
+            : review.pr.mergeable == "MERGEABLE" ? "Merging can be performed automatically."
+            : "GitHub is still computing mergeability.")
+        if hasConflicts {
+          VStack(alignment: .leading, spacing: 8) {
+            if review.isLoadingConflicts {
+              ProgressView("Finding conflicting files…").controlSize(.small)
+            }
+            if let files = review.conflictingFiles {
+              ForEach(files, id: \.self) { path in
+                Label(path, systemImage: "doc")
+                  .font(.callout.monospaced()).textSelection(.enabled)
+                  .fixedSize(horizontal: false, vertical: true)
+              }
+            }
+            if let error = review.conflictError {
+              Text(error).font(.caption).foregroundStyle(.orange)
+              Button("Retry conflict analysis") {
+                Task { await review.loadConflictingFiles(retry: true) }
+              }.controlSize(.small).disabled(review.isLoadingConflicts)
+            }
+            Text("Read-only conflict information. Resolve conflicts outside Mergeport.")
+              .font(.caption).foregroundStyle(.secondary)
+          }.padding(.leading, 56).padding(.trailing, 16).padding(.bottom, 14)
+        }
         if let stack = review.pr.stack {
           Divider()
           let blocked = stack.blocker

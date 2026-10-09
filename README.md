@@ -318,6 +318,18 @@ changed head or unmet policies. Review submission also checks the current head
 and includes the reviewed commit ID. A failed network submission is not retried
 automatically: check GitHub before retrying if the outcome is uncertain.
 
+PRs with merge conflicts show the conflicting file paths in the conversation's
+merge box, without any option to resolve them. GitHub does not provide those
+paths through its API, so opening a conflicting PR runs read-only analysis of
+its exact base and head commits using macOS Git (`merge-tree`, Git 2.38 or newer).
+Repositories are fetched into an isolated bare cache under the app's cache
+directory; no working checkout, branch or index is changed. History is fetched
+without a shallow cutoff and file contents download as needed, so the first
+analysis of a large repository can take longer. Credentials are supplied only
+to the Git process, never saved in remote URLs or configuration. Analysis
+failures appear explicitly with a retry button; resolve conflicts on GitHub or
+in your normal checkout.
+
 All open means personal queues plus followed repositories, not every accessible
 repository. PR lists, comments, reviews, thread replies, checks and file lists
 are paginated. Search exceeding GitHub's 1,000-result limit fails explicitly.
@@ -431,6 +443,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 expansion, rendered line numbers, comment anchors and same-commit refreshes.
 `--smoke-merge-policy` with `--smoke-native-review` checks optional-failure
 warnings alongside merge eligibility, and mandatory approval and policy blocks.
+`--smoke-conflicts` with `--smoke-native-review` checks the read-only conflicting
+file list, disabled Merge, and clearing paths when conflicts disappear.
 `--smoke-sidebar-inbox` checks full-inbox listing, closing an open review
 without losing its inbox entry, draft protection and the 30-point close button.
 `--smoke-shortcuts` checks every sidebar shortcut, tab numbers, ⌘K and that no two

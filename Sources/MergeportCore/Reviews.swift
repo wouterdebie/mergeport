@@ -313,6 +313,7 @@ public struct ReviewDetails: Sendable {
   /// Avatar URLs reported by GitHub, keyed by `ReviewDetails.avatarKey(_:)`.
   public var avatars: [String: URL] = [:]
   public var sidebar = PullRequestSidebar()
+  public var baseSHA: String? = nil
 
   /// Reviewers like GitHub's sidebar: pending requests first, then everyone who reviewed.
   public var sidebarReviewers: [SidebarReviewer] {

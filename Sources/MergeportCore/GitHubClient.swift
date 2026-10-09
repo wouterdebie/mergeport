@@ -612,6 +612,7 @@ extension GitHubClient {
     guard !path.isEmpty, !commit.isEmpty else {
       throw MergeportError.message("A file path and commit are required to load context.")
     }
+
     struct Blob: Decodable, Sendable { let text: String?; let isBinary: Bool }
     struct Repo: Decodable, Sendable { let object: Blob? }
     struct Result: Decodable, Sendable { let repository: Repo? }
@@ -636,6 +637,10 @@ extension GitHubClient {
     return text
   }
 
+  public func conflictingFiles(repository: String, base: String, head: String) async throws -> [String] {
+    try await MergeConflictAnalyzer.shared.files(repository: repository, base: base, head: head, token: token)
+  }
+
   public func reviewDetails(repository: String, number: Int) async throws -> ReviewDetails {
     let name = try RepositoryName.validate(repository)
     guard number > 0 else { throw MergeportError.message("Invalid PR number.") }
@@ -647,7 +652,7 @@ extension GitHubClient {
         repository(owner: $owner, name: $name) {
           viewerPermission mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
           pullRequest(number: $number) {
-            \(Self.fields) body bodyHTML createdAt changedFiles viewerCanUpdate
+            \(Self.fields) baseRefOid body bodyHTML createdAt changedFiles viewerCanUpdate
             commitCount: commits(last: 1) { totalCount }
             sidebarRequests: reviewRequests(first: 50) {
               nodes { requestedReviewer {
@@ -747,7 +752,7 @@ extension GitHubClient {
           + allEvents.flatMap { [$0.actor, $0.requestedReviewer] }
           + sidebarUsers,
         comments: allThreads.flatMap(\.comments), pr: status),
-      sidebar: sidebar)
+      sidebar: sidebar, baseSHA: info.baseRefOid)
   }
 
   private static func avatars(restUsers: [RESTUser?], comments: [DiscussionComment], pr: PullRequest)
@@ -1358,6 +1363,7 @@ private struct NativeMetadata: Decodable {
     struct Count: Decodable { let totalCount: Int }
     let node: PRNode
     let body: String
+    let baseRefOid: String?
     let changedFiles: Int
     let viewerCanUpdate: Bool
     let commitCount: Count
@@ -1387,7 +1393,7 @@ private struct NativeMetadata: Decodable {
     let milestone: Milestone?
     let participants: Nodes<Person>?
     enum CodingKeys: String, CodingKey {
-      case body, bodyHTML, createdAt, changedFiles, viewerCanUpdate, commitCount
+      case body, baseRefOid, bodyHTML, createdAt, changedFiles, viewerCanUpdate, commitCount
       case sidebarRequests, assignees, labels, milestone, participants
       case viewerSubscription, locked
     }
@@ -1412,6 +1418,7 @@ private struct NativeMetadata: Decodable {
       node = try PRNode(from: decoder)
       let fields = try decoder.container(keyedBy: CodingKeys.self)
       body = try fields.decode(String.self, forKey: .body)
+      baseRefOid = try fields.decodeIfPresent(String.self, forKey: .baseRefOid)
       bodyHTML = try fields.decodeIfPresent(String.self, forKey: .bodyHTML)
       createdAt = try fields.decodeIfPresent(Date.self, forKey: .createdAt)
       changedFiles = try fields.decode(Int.self, forKey: .changedFiles)

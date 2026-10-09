@@ -55,6 +55,12 @@ final class ReviewModel: ObservableObject {
     @Published private(set) var diffContexts: [String: DiffContext] = [:]
     @Published private(set) var contextErrors: [String: String] = [:]
     @Published private(set) var loadingContext: Set<String> = []
+    @Published private(set) var conflictingFiles: [String]?
+    @Published private(set) var conflictError: String?
+    @Published private(set) var isLoadingConflicts = false
+    private var conflictRevision: String?
+    private var conflictTask: Task<Void, Never>?
+    private var conflictTaskID: UUID?
     private var diffRevision = UUID()
     private var lastLoaded: Date?
     private var loadTask: Task<Void, Never>?
@@ -134,6 +140,12 @@ final class ReviewModel: ObservableObject {
             diffContexts = contexts
             self.contextErrors = contextErrors
             loadingContext = []
+            if details?.headSHA != fresh.headSHA || details?.baseSHA != fresh.baseSHA
+                || fresh.pr.mergeable != "CONFLICTING" && fresh.pr.mergeState != "DIRTY" {
+                conflictingFiles = nil
+                conflictError = nil
+                conflictRevision = nil
+            }
             details = fresh
             lastLoaded = .now
             if !fresh.files.contains(where: { $0.filename == selectedFile }) { selectedFile = FileTree.orderedFilenames(fresh.files).first }
@@ -151,6 +163,60 @@ final class ReviewModel: ObservableObject {
     var hasRunningChecks: Bool {
         guard let details else { return false }
         return details.checkSummary.pending > 0
+    }
+
+    var conflictKey: String? {
+        guard let details, pr.mergeable == "CONFLICTING" || pr.mergeState == "DIRTY" else { return nil }
+        return "\(app?.accountSessionID.uuidString ?? ""):\(details.baseSHA ?? ""):\(details.headSHA)"
+    }
+
+    func loadConflictingFiles(retry: Bool = false) async {
+        if let conflictTask { await conflictTask.value }
+        guard retry || conflictRevision != conflictKey else { return }
+        let id = UUID()
+        conflictTaskID = id
+        conflictRevision = conflictKey
+        let task = Task { await fetchConflictingFiles() }
+        conflictTask = task
+        await task.value
+        if conflictTaskID == id {
+            conflictTask = nil
+            conflictTaskID = nil
+        }
+    }
+
+    private func fetchConflictingFiles() async {
+        guard let app, let details, let key = conflictKey else {
+            conflictingFiles = nil
+            conflictError = nil
+            conflictRevision = nil
+            return
+        }
+        conflictRevision = key
+        conflictingFiles = nil
+        conflictError = nil
+        isLoadingConflicts = true
+        let generation = app.accountSessionID
+        defer { isLoadingConflicts = false }
+        do {
+            let files: [String]
+            if isDemo { files = ["app/services/notification-rs/project.json"] }
+            else {
+                guard let base = details.baseSHA else {
+                    throw MergeportError.message("The base commit is unavailable. Refresh the PR before inspecting conflicts.")
+                }
+                files = try await app.githubClient().conflictingFiles(
+                    repository: reference.repository, base: base, head: details.headSHA)
+            }
+            guard app.accountSessionID == generation, conflictKey == key else { return }
+            conflictingFiles = files
+            if files.isEmpty {
+                conflictError = "Git found no conflicting files for these commits. GitHub's status may have changed; refresh the PR."
+            }
+        } catch {
+            guard app.accountSessionID == generation, conflictKey == key else { return }
+            conflictError = error.localizedDescription
+        }
     }
 
     func expandContext(path: String, gap: Int, direction: ContextDirection) async {
