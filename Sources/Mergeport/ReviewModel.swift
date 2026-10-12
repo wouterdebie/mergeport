@@ -47,8 +47,6 @@ final class ReviewModel: ObservableObject {
     /// Files the reviewer folded or unfolded; the rest follow `PullRequestFile.isLargeDiff`.
     @Published private(set) var fileExpansion: [String: Bool] = [:]
     @Published private(set) var fileScrollRequest: FileScrollRequest?
-    /// Scroll-following waits for a jump to land, so it cannot reselect the file it is leaving.
-    var followPausedUntil = Date.distantPast
     @Published var isLoading = false
     @Published var isPerforming = false { didSet { app?.objectWillChange.send() } }
     @Published var error: String?
@@ -102,7 +100,6 @@ final class ReviewModel: ObservableObject {
         collapsedFolders.subtract(FileTree.ancestors(of: path))
         if expand { fileExpansion[path] = true }
         selectedFile = path
-        followPausedUntil = .now.addingTimeInterval(0.5)
         fileScrollRequest = FileScrollRequest(path: path)
     }
 

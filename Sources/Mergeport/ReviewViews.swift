@@ -1,13 +1,6 @@
 import MergeportCore
 import SwiftUI
 
-private struct DiffLayoutKey: PreferenceKey {
-  static let defaultValue: [String: CGFloat] = [:]
-  static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-  }
-}
-
 private struct CommentTarget: Identifiable {
   let anchor: DiffAnchor
   var id: String { "\(anchor.path):\(anchor.side.rawValue):\(anchor.line)" }
@@ -1984,86 +1977,24 @@ struct ReviewSectionTabs: View {
 }
 
 /// GitHub-style changed-files tree: collapsible folders, indent guides and status icons.
-private struct FileHeaderKey: PreferenceKey {
-  static let defaultValue: [Int: CGFloat] = [:]
-  static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
-    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-  }
-}
-
-/// Keeps file sections' scroll IDs apart from the diff rows inside them.
-private struct PageID: Hashable { let path: String }
-private extension PullRequestFile { var pageID: PageID { PageID(path: filename) } }
-
-/// A diff row keyed by its file too: lazy stacks mix up rows whose IDs repeat across sections.
-private struct PageRow: Identifiable {
-  struct ID: Hashable {
-    let path: String
-    let row: String
-  }
-  let path: String
-  let row: DiffContextRow
-  var id: ID { ID(path: path, row: row.id) }
-}
-
-/// Every changed file on one scrolling page, as on GitHub. A file's header sticks to the top
-/// while it is read and keeps the tree in step; large diffs stay folded until loaded.
+/// Every changed file on one scrolling page, as on GitHub. An AppKit table lays the rows out with
+/// a fixed height per kind of row, so PRs with tens of thousands of lines keep their place through
+/// reloads, resizes and jumps. A file's header floats at the top while that file is read.
 struct ChangedFilesPage: View {
   @EnvironmentObject var app: AppModel
   @ObservedObject var review: ReviewModel
   let files: [PullRequestFile]
   let comment: (DiffAnchor) -> Void
-  /// Header offsets from the latest layout; deliberately not observed.
-  @State private var headers = HeaderPositions()
-  private static let space = "changed-files"
-  private let headerHeight: CGFloat = 34
-
-  private final class HeaderPositions { var minY: [Int: CGFloat] = [:] }
 
   var body: some View {
-    ScrollViewReader { proxy in
-      VStack(spacing: 0) {
-        summary(proxy)
-        Divider()
-        GeometryReader { viewport in
-          let width = visibleWidth(viewport.size.width)
-          ScrollView([.vertical, .horizontal]) {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-              ForEach(Array(files.enumerated()), id: \.element.pageID) { index, file in
-                Section {
-                  fileBody(file, width: width)
-                } header: {
-                  header(file, index: index, width: width, proxy: proxy)
-                }
-              }
-            }
-            .frame(minWidth: width, alignment: .leading).padding(.bottom, 6)
-          }
-          .coordinateSpace(name: Self.space)
-          .background {
-            Color.clear.preference(key: DiffLayoutKey.self, value: ["viewport": width])
-          }
-        }
-        .onPreferenceChange(FileHeaderKey.self) { follow($0) }
-        .onPreferenceChange(DiffLayoutKey.self) { values in
-          if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
-            review.diffLayoutMeasurements = values
-          }
-        }
-      }
-      .onChange(of: review.fileScrollRequest) { _, request in
-        if let request { scroll(to: request.path, proxy) }
-      }
-      .onAppear {
-        // Coming back to Files changed returns to the file you were reading.
-        guard let path = review.selectedFile, path != files.first?.filename else { return }
-        review.followPausedUntil = .now.addingTimeInterval(0.5)
-        DispatchQueue.main.async { scroll(to: path, proxy) }
-      }
+    VStack(spacing: 0) {
+      summary
+      Divider()
+      FilesTable(review: review, app: app, files: files, comment: comment)
     }
   }
 
-  private func summary(_ proxy: ScrollViewProxy) -> some View {
+  private var summary: some View {
     HStack(spacing: 10) {
       Text("\(files.count) changed file\(files.count == 1 ? "" : "s")").fontWeight(.semibold)
       Text(
@@ -2071,47 +2002,483 @@ struct ChangedFilesPage: View {
       )
       .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
       Spacer(minLength: 8)
-      Button("Expand all") { setAll(true, proxy) }
+      Button("Expand all") { setAll(true) }
         .disabled(files.allSatisfy { review.isExpanded($0) })
-      Button("Collapse all") { setAll(false, proxy) }
+      Button("Collapse all") { setAll(false) }
         .disabled(!files.contains { review.isExpanded($0) })
     }
     .font(.caption).buttonStyle(.borderless)
     .padding(.horizontal, 14).padding(.vertical, 8)
   }
 
-  private func header(_ file: PullRequestFile, index: Int, width: CGFloat, proxy: ScrollViewProxy)
-    -> some View
-  {
-    GeometryReader { geometry in
-      let frame = geometry.frame(in: .named(Self.space))
-      // Stays at the visible left edge while long lines scroll the page sideways.
-      headerBar(file, index: index, proxy: proxy)
-        .frame(width: width, height: headerHeight)
-        .offset(x: max(0, -frame.minX))
-        .preference(key: FileHeaderKey.self, value: [index: frame.minY])
-    }
-    .frame(height: headerHeight)
-    .background {
-      ZStack {
-        Color(nsColor: .windowBackgroundColor)
-        Color.primary.opacity(0.045)
-      }
-    }
-    .overlay(alignment: .top) { Divider() }
-    .overlay(alignment: .bottom) { Divider() }
+  /// Keeps the file being read at the top while everything above it folds or unfolds.
+  private func setAll(_ expanded: Bool) {
+    review.setAllExpanded(expanded)
+    if let path = review.selectedFile { review.showFile(path) }
+  }
+}
+
+/// A row of the Files changed table.
+private enum FilesRow {
+  case header(PullRequestFile)
+  case line(path: String, DiffLine)
+  case gap(path: String, DiffContextGap)
+  case notice(path: String, index: Int, text: String, color: Color)
+  case largeDiff(PullRequestFile)
+  case unavailable(PullRequestFile, reason: String)
+  case spacer(path: String)
+
+  enum ID: Hashable {
+    case header(String), line(String, Int), gap(String, Int), notice(String, Int)
+    case largeDiff(String), unavailable(String), spacer(String)
   }
 
-  private func headerBar(_ file: PullRequestFile, index: Int, proxy: ScrollViewProxy) -> some View {
-    let expanded = review.isExpanded(file)
-    return HStack(spacing: 8) {
-      Button {
-        review.setExpanded(!expanded, file: file.filename)
-        // Folding the file being read would otherwise leave the page further down.
-        if expanded, headers.minY[index].map({ $0 < 1 }) == true {
-          DispatchQueue.main.async { scroll(to: file.filename, proxy) }
+  var id: ID {
+    switch self {
+    case .header(let file): .header(file.filename)
+    case .line(let path, let line): .line(path, line.id)
+    case .gap(let path, let gap): .gap(path, gap.id)
+    case .notice(let path, let index, _, _): .notice(path, index)
+    case .largeDiff(let file): .largeDiff(file.filename)
+    case .unavailable(let file, _): .unavailable(file.filename)
+    case .spacer(let path): .spacer(path)
+    }
+  }
+
+  /// Fixed per kind, so AppKit can place any row without measuring the rows before it.
+  var height: CGFloat {
+    switch self {
+    case .header: 34
+    case .line: 20
+    case .gap: 30
+    case .notice: 32
+    case .largeDiff, .unavailable: 92
+    case .spacer: 10
+    }
+  }
+
+  var reuseIdentifier: NSUserInterfaceItemIdentifier {
+    switch self {
+    case .header: NSUserInterfaceItemIdentifier("header")
+    case .line: NSUserInterfaceItemIdentifier("line")
+    case .gap: NSUserInterfaceItemIdentifier("gap")
+    case .notice: NSUserInterfaceItemIdentifier("notice")
+    case .largeDiff, .unavailable: NSUserInterfaceItemIdentifier("placeholder")
+    case .spacer: NSUserInterfaceItemIdentifier("spacer")
+    }
+  }
+}
+
+/// The table's rows, with the file each row belongs to and where each file's header is.
+@MainActor
+private struct FilesLayout {
+  private(set) var rows: [FilesRow] = []
+  private(set) var fileOfRow: [Int] = []
+  private(set) var headerRow: [String: Int] = [:]
+  private static let codeFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+  init() {}
+
+  init(files: [PullRequestFile], review: ReviewModel) {
+    for (index, file) in files.enumerated() {
+      let path = file.filename
+      func append(_ row: FilesRow) {
+        rows.append(row)
+        fileOfRow.append(index)
+      }
+      headerRow[path] = rows.count
+      append(.header(file))
+      if review.isExpanded(file) {
+        switch review.diffs[path] {
+        case .available(let diff, let complete):
+          var notices: [(String, Color)] = []
+          if let error = review.contextErrors[path] {
+            notices.append(("Context expansion unavailable: \(error)", .orange))
+          }
+          if !complete {
+            notices.append(("GitHub's patch is incomplete. Open GitHub for the entire file before approving.", .orange))
+          }
+          if diff.lines.contains(where: \.coarseHighlights) {
+            notices.append(("Very long replacement lines use coarser within-line highlights.", .blue))
+          }
+          for (number, notice) in notices.enumerated() {
+            append(.notice(path: path, index: number, text: notice.0, color: notice.1))
+          }
+          for row in review.diffContexts[path]?.rows ?? diff.lines.map(DiffContextRow.line) {
+            switch row {
+            case .line(let line): append(.line(path: path, line))
+            case .gap(let gap): append(.gap(path: path, gap))
+            }
+          }
+        case .unavailable(let reason):
+          append(.unavailable(file, reason: reason))
+        case nil:
+          break
         }
-      } label: {
+      } else if review.fileExpansion[path] == nil {
+        append(.largeDiff(file))
+      }
+      append(.spacer(path: path))
+    }
+  }
+
+  /// Wide enough for the widest line: the longest few lines (tabs count extra) measured in the diff font.
+  var contentWidth: CGFloat {
+    var lines: [(length: Int, text: String)] = []
+    for case .line(_, let line) in rows {
+      lines.append((line.text.utf16.count + 3 * line.text.utf8.reduce(0) { $1 == 9 ? $0 + 1 : $0 }, line.text))
+    }
+    let widest = lines.sorted { $0.length > $1.length }.prefix(16).map {
+      NSAttributedString(string: $0.text, attributes: [.font: Self.codeFont]).size().width
+    }.max() ?? 0
+    // Line numbers, comment button, +/− marker and trailing padding.
+    return 140 + ceil(widest) + 8
+  }
+}
+
+private struct FilesTable: NSViewRepresentable {
+  let review: ReviewModel
+  let app: AppModel
+  let files: [PullRequestFile]
+  let comment: (DiffAnchor) -> Void
+
+  func makeCoordinator() -> FilesTableCoordinator { FilesTableCoordinator() }
+
+  func makeNSView(context: Context) -> NSScrollView {
+    let table = FilesTableView()
+    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("diff"))
+    column.resizingMask = []
+    table.addTableColumn(column)
+    table.headerView = nil
+    table.style = .plain
+    table.rowSizeStyle = .custom
+    table.intercellSpacing = .zero
+    table.selectionHighlightStyle = .none
+    table.gridStyleMask = []
+    table.backgroundColor = .clear
+    table.floatsGroupRows = true
+    table.usesAutomaticRowHeights = false
+    table.columnAutoresizingStyle = .noColumnAutoresizing
+    table.allowsColumnResizing = false
+    table.allowsTypeSelect = false
+    table.focusRingType = .none
+    table.dataSource = context.coordinator
+    table.delegate = context.coordinator
+    let scroll = NSScrollView()
+    scroll.documentView = table
+    scroll.hasVerticalScroller = true
+    scroll.hasHorizontalScroller = true
+    scroll.autohidesScrollers = true
+    scroll.drawsBackground = false
+    context.coordinator.attach(scroll: scroll, table: table)
+    context.coordinator.update(self, initial: true)
+    return scroll
+  }
+
+  func updateNSView(_ scroll: NSScrollView, context: Context) {
+    context.coordinator.update(self, initial: false)
+  }
+
+  static func dismantleNSView(_ scroll: NSScrollView, coordinator: FilesTableCoordinator) {
+    NotificationCenter.default.removeObserver(coordinator)
+  }
+}
+
+@MainActor
+private final class FilesTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+  private var parent: FilesTable?
+  private var layout = FilesLayout()
+  private var ids: [FilesRow.ID] = []
+  private var loadedRevision: UUID?
+  private var contentWidth: CGFloat = 0
+  private weak var scroll: NSScrollView?
+  private weak var table: NSTableView?
+  private var handledRequest: UUID?
+  /// A folded file whose header had floated: scroll back to it once the rows are rebuilt.
+  private var pendingScroll: String?
+  private var scrollingProgrammatically = false
+  private var lastGeometry: (CGFloat, CGFloat)?
+
+  func attach(scroll: NSScrollView, table: NSTableView) {
+    self.scroll = scroll
+    self.table = table
+    let clip = scroll.contentView
+    clip.postsBoundsChangedNotifications = true
+    clip.postsFrameChangedNotifications = true
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(boundsChanged), name: NSView.boundsDidChangeNotification, object: clip)
+    NotificationCenter.default.addObserver(
+      self, selector: #selector(frameChanged), name: NSView.frameDidChangeNotification, object: clip)
+  }
+
+  func update(_ parent: FilesTable, initial: Bool) {
+    self.parent = parent
+    guard let table else { return }
+    let review = parent.review
+    layout = FilesLayout(files: parent.files, review: review)
+    let nextIDs = layout.rows.map(\.id)
+    if nextIDs != ids || review.diffRevision != loadedRevision {
+      ids = nextIDs
+      loadedRevision = review.diffRevision
+      contentWidth = layout.contentWidth
+      table.reloadData()
+      measureRows()
+      resizeColumn()
+    } else {
+      refreshVisibleRows()
+    }
+    if initial {
+      handledRequest = review.fileScrollRequest?.id
+      // Coming back to Files changed returns to the file you were reading.
+      if let path = review.selectedFile, path != parent.files.first?.filename {
+        DispatchQueue.main.async { self.scroll(to: path) }
+      }
+    } else if let request = review.fileScrollRequest, request.id != handledRequest {
+      handledRequest = request.id
+      scroll(to: request.path)
+    } else if let path = pendingScroll {
+      pendingScroll = nil
+      scroll(to: path)
+    }
+    DispatchQueue.main.async { self.recordForSmokeTest() }
+  }
+
+  // MARK: Table
+
+  func numberOfRows(in tableView: NSTableView) -> Int { layout.rows.count }
+
+  func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { layout.rows[row].height }
+
+  func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+    if case .header = layout.rows[row] { true } else { false }
+  }
+
+  func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+
+  func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
+    tableView.makeView(withIdentifier: PlainRowView.reuseIdentifier, owner: nil) as? PlainRowView
+      ?? PlainRowView()
+  }
+
+  func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+    let item = layout.rows[row]
+    let cell =
+      tableView.makeView(withIdentifier: item.reuseIdentifier, owner: nil) as? HostingCell
+      ?? HostingCell(identifier: item.reuseIdentifier)
+    configure(cell, item)
+    return cell
+  }
+
+  private func configure(_ cell: HostingCell, _ item: FilesRow) {
+    guard let parent, let clip = scroll?.contentView else { return }
+    let review = parent.review
+    cell.clip = clip
+    switch item {
+    case .header(let file):
+      cell.placement = .sticky
+      cell.host.rootView = AnyView(
+        FileHeaderRow(file: file, expanded: review.isExpanded(file)) { [weak self] in self?.toggle(file) })
+    case .line(let path, let line):
+      cell.placement = .fill
+      cell.host.rootView = AnyView(
+        DiffLineRow(
+          line: line, path: path, canComment: !review.draftIsStale && !review.isPerforming,
+          comment: parent.comment))
+    case .gap(let path, let gap):
+      cell.placement = .fill
+      cell.host.rootView = AnyView(
+        ContextGapRow(gap: gap, loading: review.loadingContext.contains(path)) { direction in
+          Task { await review.expandContext(path: path, gap: gap.id, direction: direction) }
+        })
+    case .notice(_, _, let text, let color):
+      cell.placement = .fill
+      cell.host.rootView = AnyView(NoticeRow(text: text, color: color))
+    case .largeDiff(let file):
+      cell.placement = .visible
+      cell.host.rootView = AnyView(
+        PlaceholderRow(text: "Large diffs are not rendered by default.", action: "Load diff") {
+          review.setExpanded(true, file: file.filename)
+        })
+    case .unavailable(_, let reason):
+      cell.placement = .visible
+      let app = parent.app
+      let url = URL(string: review.pr.url.absoluteString + "/files")
+      cell.host.rootView = AnyView(
+        PlaceholderRow(text: reason, action: "Open files on GitHub", disabled: review.isDemo) {
+          if let url { app.openExternal(url) }
+        })
+    case .spacer:
+      cell.placement = .fill
+      cell.host.rootView = AnyView(Color.clear)
+    }
+  }
+
+  /// Updates rows on screen (including a floating header) in place; the row list is unchanged.
+  private func refreshVisibleRows() {
+    table?.enumerateAvailableRowViews { rowView, row in
+      guard row >= 0, row < layout.rows.count,
+        let cell = rowView.subviews.lazy.compactMap({ $0 as? HostingCell }).first
+      else { return }
+      configure(cell, layout.rows[row])
+    }
+  }
+
+  // MARK: Scrolling
+
+  @objc private func boundsChanged() {
+    updateCellGeometry()
+    if !scrollingProgrammatically { follow() }
+    recordForSmokeTest()
+  }
+
+  @objc private func frameChanged() {
+    resizeColumn()
+  }
+
+  private func resizeColumn() {
+    guard let table, let clip = scroll?.contentView, let column = table.tableColumns.first else { return }
+    let width = max(clip.bounds.width, contentWidth)
+    if abs(column.width - width) > 0.5 {
+      column.width = width
+      measureRows()
+    }
+    updateCellGeometry()
+  }
+
+  /// AppKit estimates the heights of rows it hasn't asked about yet. Asking for every row keeps the
+  /// page height and every file's position exact, so jumps land on the right file.
+  private func measureRows() {
+    guard let table else { return }
+    for row in 0..<table.numberOfRows { _ = table.rect(ofRow: row) }
+    table.tile()
+  }
+
+  /// Headers and placeholders stay within the visible width while long lines scroll the page sideways.
+  private func updateCellGeometry() {
+    guard let table, let clip = scroll?.contentView else { return }
+    let geometry = (clip.bounds.minX, clip.bounds.width)
+    if let lastGeometry, lastGeometry == geometry { return }
+    lastGeometry = geometry
+    table.enumerateAvailableRowViews { rowView, _ in
+      for case let cell as HostingCell in rowView.subviews where cell.placement != .fill {
+        cell.needsLayout = true
+      }
+    }
+  }
+
+  /// The file of the row at the top is the one being read.
+  private func follow() {
+    guard let parent, let table, let clip = scroll?.contentView else { return }
+    let row = table.row(at: NSPoint(x: clip.bounds.minX, y: clip.bounds.minY))
+    guard row >= 0, row < layout.fileOfRow.count else { return }
+    let path = parent.files[layout.fileOfRow[row]].filename
+    if parent.review.selectedFile != path { parent.review.selectedFile = path }
+  }
+
+  private func scroll(to path: String) {
+    guard let parent, let table, let scroll, let row = layout.headerRow[path] else { return }
+    table.tile()
+    let clip = scroll.contentView
+    let bottom = max(0, table.frame.height - clip.bounds.height)
+    scrollingProgrammatically = true
+    clip.scroll(to: NSPoint(x: 0, y: min(table.rect(ofRow: row).minY, bottom)))
+    scroll.reflectScrolledClipView(clip)
+    scrollingProgrammatically = false
+    if parent.review.selectedFile != path { parent.review.selectedFile = path }
+  }
+
+  private func toggle(_ file: PullRequestFile) {
+    guard let parent, let table, let clip = scroll?.contentView else { return }
+    let expanded = parent.review.isExpanded(file)
+    // Folding the file being read would otherwise leave the page further down.
+    if expanded, let row = layout.headerRow[file.filename], table.rect(ofRow: row).minY < clip.bounds.minY {
+      pendingScroll = file.filename
+    }
+    parent.review.setExpanded(!expanded, file: file.filename)
+  }
+
+  private func recordForSmokeTest() {
+    guard ProcessInfo.processInfo.arguments.contains("--smoke-test"), let parent, let table,
+      let clip = scroll?.contentView
+    else { return }
+    table.layoutSubtreeIfNeeded()
+    var values: [String: CGFloat] = ["viewport": clip.bounds.width]
+    table.enumerateAvailableRowViews { rowView, row in
+      guard row >= 0, row < layout.rows.count, case .line(let path, let line) = layout.rows[row] else { return }
+      values["row-\(path)#\(line.id)"] = rowView.frame.width
+    }
+    parent.review.diffLayoutMeasurements = values
+  }
+}
+
+private final class FilesTableView: NSTableView {
+  // Clicks go to the SwiftUI rows (buttons, text selection) rather than to table selection.
+  override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+    true
+  }
+}
+
+private final class PlainRowView: NSTableRowView {
+  static let reuseIdentifier = NSUserInterfaceItemIdentifier("row")
+
+  override init(frame: NSRect) {
+    super.init(frame: frame)
+    identifier = Self.reuseIdentifier
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func drawBackground(in dirtyRect: NSRect) {}
+  override func drawSelection(in dirtyRect: NSRect) {}
+  override func drawSeparator(in dirtyRect: NSRect) {}
+}
+
+/// A table cell showing a SwiftUI row.
+private final class HostingCell: NSView {
+  enum Placement {
+    /// The full row width, so backgrounds reach the end of the longest line.
+    case fill
+    /// The visible width at the row's start.
+    case visible
+    /// The visible width wherever the page has scrolled sideways.
+    case sticky
+  }
+
+  let host = NSHostingView(rootView: AnyView(EmptyView()))
+  var placement = Placement.fill { didSet { if placement != oldValue { needsLayout = true } } }
+  weak var clip: NSClipView?
+
+  init(identifier: NSUserInterfaceItemIdentifier) {
+    super.init(frame: .zero)
+    self.identifier = identifier
+    host.sizingOptions = []
+    addSubview(host)
+  }
+
+  required init?(coder: NSCoder) { nil }
+
+  override func layout() {
+    super.layout()
+    guard placement != .fill, let clip else {
+      host.frame = bounds
+      return
+    }
+    // A floating header lives outside the scrolling rows, so measure against the clip view itself.
+    let visible = convert(clip.bounds, from: clip)
+    let width = min(visible.width, bounds.width)
+    let x = placement == .sticky ? max(0, min(visible.minX, bounds.width - width)) : 0
+    host.frame = NSRect(x: x, y: 0, width: width, height: bounds.height)
+  }
+}
+
+private struct FileHeaderRow: View {
+  let file: PullRequestFile
+  let expanded: Bool
+  let toggle: () -> Void
+
+  var body: some View {
+    HStack(spacing: 8) {
+      Button(action: toggle) {
         Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
           .rotationEffect(.degrees(expanded ? 90 : 0))
           .frame(width: 18, height: 18).contentShape(Rectangle())
@@ -2138,130 +2505,49 @@ struct ChangedFilesPage: View {
     .font(.system(size: 12, design: .monospaced))
     .monospacedDigit()
     .padding(.horizontal, 10)
-  }
-
-  @ViewBuilder private func fileBody(_ file: PullRequestFile, width: CGFloat) -> some View {
-    if review.isExpanded(file) {
-      switch review.diffs[file.filename] {
-      case .available(let diff, let complete):
-        if let error = review.contextErrors[file.filename] {
-          notice("Context expansion unavailable: \(error)", color: .orange, width: width)
-        }
-        if !complete {
-          notice(
-            "GitHub's patch is incomplete. Open GitHub for the entire file before approving.",
-            color: .orange, width: width)
-        }
-        if diff.lines.contains(where: \.coarseHighlights) {
-          notice("Very long replacement lines use coarser within-line highlights.", color: .blue, width: width)
-        }
-        let rows = review.diffContexts[file.filename]?.rows ?? diff.lines.map(DiffContextRow.line)
-        ForEach(rows.map { PageRow(path: file.filename, row: $0) }) { item in
-          switch item.row {
-          case .line(let line): diffRow(line, path: file.filename)
-          case .gap(let gap): contextGap(gap, path: file.filename)
-          }
-        }
-      case .unavailable(let reason):
-        placeholder(reason, action: "Open files on GitHub", disabled: review.isDemo, width: width) {
-          if let url = URL(string: review.pr.url.absoluteString + "/files") { app.openExternal(url) }
-        }
-      case nil:
-        EmptyView()
-      }
-    } else if review.fileExpansion[file.filename] == nil {
-      placeholder("Large diffs are not rendered by default.", action: "Load diff", width: width) {
-        review.setExpanded(true, file: file.filename)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    .background {
+      ZStack {
+        Color(nsColor: .windowBackgroundColor)
+        Color.primary.opacity(0.045)
       }
     }
-    Color.clear.frame(height: 10)
+    .overlay(alignment: .top) { Divider() }
+    .overlay(alignment: .bottom) { Divider() }
   }
+}
 
-  private func placeholder(
-    _ text: String, action: String, disabled: Bool = false, width: CGFloat,
-    perform: @escaping () -> Void
-  ) -> some View {
-    VStack(spacing: 10) {
-      Text(text).foregroundStyle(.secondary).multilineTextAlignment(.center)
-        .fixedSize(horizontal: false, vertical: true)
-      Button(action, action: perform).disabled(disabled)
-    }
-    .font(.callout).padding(.horizontal, 20).padding(.vertical, 18)
-    .frame(width: width)
-  }
+private struct DiffLineRow: View {
+  let line: DiffLine
+  let path: String
+  let canComment: Bool
+  let comment: (DiffAnchor) -> Void
 
-  private func notice(_ text: String, color: Color, width: CGFloat) -> some View {
-    Text(text).font(.callout).textSelection(.enabled)
-      .padding(10).frame(width: width, alignment: .leading)
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .background(color.opacity(0.1))
-  }
-
-  private func contextGap(_ gap: DiffContextGap, path: String) -> some View {
-    HStack(spacing: 12) {
-      if review.loadingContext.contains(path) {
-        ProgressView().controlSize(.small)
-      } else {
-        if gap.canExpandUp {
-          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .up) } } label: {
-            Label("Expand up", systemImage: "arrow.up")
-          }.help("Show up to 20 lines above the next hunk")
-        }
-        if gap.canExpandDown {
-          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .down) } } label: {
-            Label("Expand down", systemImage: "arrow.down")
-          }.help("Show up to 20 lines below the previous hunk")
-        }
-        if gap.canExpandUp && gap.canExpandDown {
-          Button("Expand all") {
-            Task { await review.expandContext(path: path, gap: gap.id, direction: .all) }
-          }
-        }
-      }
-      Text(gap.count.map { "\($0) hidden lines" } ?? "More context")
-        .foregroundStyle(.secondary)
-      Spacer(minLength: 0)
-    }
-    .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.blue.opacity(0.08))
-  }
-
-  private func diffRow(_ line: DiffLine, path: String) -> some View {
-    HStack(alignment: .top, spacing: 0) {
+  var body: some View {
+    let anchor = line.anchor(path: path)
+    HStack(spacing: 0) {
       Button {
-        if let anchor = line.anchor(path: path) { comment(anchor) }
+        if let anchor { comment(anchor) }
       } label: {
         HStack(spacing: 0) {
           Text(line.oldLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
           Text(line.newLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
           Image(systemName: "plus.bubble").font(.system(size: 9)).frame(width: 24)
-            .opacity(line.anchor(path: path) == nil ? 0 : 1)
+            .opacity(anchor == nil ? 0 : 1)
         }.foregroundStyle(.secondary).padding(.trailing, 8)
           .frame(maxHeight: .infinity).background(DiffColors.gutter(line.kind))
-      }.buttonStyle(.plain).disabled(
-        line.anchor(path: path) == nil || review.draftIsStale || review.isPerforming)
+      }.buttonStyle(.plain).disabled(anchor == nil || !canComment)
       Text(line.kind == .addition ? "+" : line.kind == .deletion ? "−" : " ").frame(width: 16)
-        .padding(.vertical, 3)
-      Text(intralineText(line)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
-        .padding(.trailing, 16).padding(.vertical, 3)
+      Text(highlighted).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, 16)
       Spacer(minLength: 0)
     }
     .font(.system(size: 12, design: .monospaced))
-    .fixedSize(horizontal: false, vertical: true)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     .background(DiffColors.code(line.kind))
-    .background {
-      if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
-        GeometryReader { geometry in
-          Color.clear.preference(
-            key: DiffLayoutKey.self, value: ["row-\(path)#\(line.id)": geometry.size.width])
-        }
-      }
-    }
   }
 
-  private func intralineText(_ line: DiffLine) -> AttributedString {
+  private var highlighted: AttributedString {
     var text = AttributedString(line.text)
     for span in line.highlights {
       let start = text.characters.index(text.characters.startIndex, offsetBy: span.lowerBound)
@@ -2271,31 +2557,67 @@ struct ChangedFilesPage: View {
     }
     return text
   }
+}
 
-  /// The file whose header is stuck to (or reaching) the top is the one being read.
-  private func follow(_ positions: [Int: CGFloat]) {
-    headers.minY = positions
-    guard Date.now >= review.followPausedUntil, let first = positions.keys.min() else { return }
-    let index = positions.filter { $0.value <= headerHeight }.keys.max() ?? max(first - 1, 0)
-    guard files.indices.contains(index), review.selectedFile != files[index].filename else { return }
-    review.selectedFile = files[index].filename
+private struct ContextGapRow: View {
+  let gap: DiffContextGap
+  let loading: Bool
+  let expand: (ContextDirection) -> Void
+
+  var body: some View {
+    HStack(spacing: 12) {
+      if loading {
+        ProgressView().controlSize(.small)
+      } else {
+        if gap.canExpandUp {
+          Button { expand(.up) } label: {
+            Label("Expand up", systemImage: "arrow.up")
+          }.help("Show up to 20 lines above the next hunk")
+        }
+        if gap.canExpandDown {
+          Button { expand(.down) } label: {
+            Label("Expand down", systemImage: "arrow.down")
+          }.help("Show up to 20 lines below the previous hunk")
+        }
+        if gap.canExpandUp && gap.canExpandDown {
+          Button("Expand all") { expand(.all) }
+        }
+      }
+      Text(gap.count.map { "\($0) hidden lines" } ?? "More context")
+        .foregroundStyle(.secondary)
+      Spacer(minLength: 0)
+    }
+    .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12)
+    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    .background(Color.blue.opacity(0.08))
   }
+}
 
-  private func scroll(to path: String, _ proxy: ScrollViewProxy) {
-    review.followPausedUntil = .now.addingTimeInterval(0.5)
-    proxy.scrollTo(PageID(path: path), anchor: .topLeading)
+private struct NoticeRow: View {
+  let text: String
+  let color: Color
+
+  var body: some View {
+    Text(text).font(.callout).lineLimit(1).truncationMode(.tail).help(text)
+      .padding(.horizontal, 10)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+      .background(color.opacity(0.1))
   }
+}
 
-  /// Always-shown (legacy) scroll bars sit inside the scroll view's frame; overlay ones don't.
-  private func visibleWidth(_ frameWidth: CGFloat) -> CGFloat {
-    guard NSScroller.preferredScrollerStyle == .legacy else { return frameWidth }
-    return frameWidth - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
-  }
+private struct PlaceholderRow: View {
+  let text: String
+  let action: String
+  var disabled = false
+  let perform: () -> Void
 
-  /// Keeps the file being read at the top while everything above it folds or unfolds.
-  private func setAll(_ expanded: Bool, _ proxy: ScrollViewProxy) {
-    review.setAllExpanded(expanded)
-    if let path = review.selectedFile { DispatchQueue.main.async { scroll(to: path, proxy) } }
+  var body: some View {
+    VStack(spacing: 10) {
+      Text(text).foregroundStyle(.secondary).multilineTextAlignment(.center).lineLimit(3)
+      Button(action, action: perform).disabled(disabled)
+    }
+    .font(.callout).padding(.horizontal, 20)
+    .frame(maxWidth: .infinity, maxHeight: .infinity)
   }
 }
 

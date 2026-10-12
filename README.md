@@ -111,7 +111,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   and the tree follows the file you're reading. Each file's header, with its
   path, +/− counts and a copy button, sticks to the top while you read it and
   folds the file; Expand all / Collapse all fold every file. Files with more
-  than 400 changed lines are folded until you click **Load diff**. Diffs use
+  than 400 changed lines are folded until you click **Load diff**. The page is
+an AppKit table with a fixed height per kind of row, so PRs with tens of
+thousands of lines keep their place through reloads, resizes and jumps. Diffs use
   old/new line numbers; changed characters within replacement lines get
   stronger red/green highlights; checks and commit history.
 - **Review submission**: draft inline comments by clicking a diff line number,
