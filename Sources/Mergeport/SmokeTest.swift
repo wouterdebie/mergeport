@@ -338,7 +338,7 @@ enum SmokeTest {
           else { throw MergeportError.message("Expanded context changed line numbers or review anchors.") }
           try await Task.sleep(for: .milliseconds(400))
           guard review.diffContexts[file.filename]?.hasSource == true,
-            review.diffLayoutMeasurements["row--5"] != nil
+            review.diffLayoutMeasurements["row-\(file.filename)#-5"] != nil
           else {
             throw MergeportError.message(
               "Expanded context did not reach the rendered diff: source=\(review.diffContexts[file.filename]?.hasSource == true), section=\(review.section), active=\(model.activeTab?.id == tab.id), metrics=\(review.diffLayoutMeasurements).")
@@ -698,13 +698,32 @@ enum SmokeTest {
           review.selectedFile == "services/routing/src/routing.ts"
         else { throw MergeportError.message("Changed files tree is wrong: \(names).") }
         review.collapsedFolders = ["services/routing/tests"]
-        review.selectedFile = "services/routing/tests/routing.test.ts"
-        guard review.collapsedFolders.isEmpty else {
-          throw MergeportError.message("Selecting a file did not reveal it in the tree.")
+        review.showFile("services/routing/tests/routing.test.ts")
+        guard review.collapsedFolders.isEmpty, review.fileScrollRequest?.path == "services/routing/tests/routing.test.ts" else {
+          throw MergeportError.message("Selecting a file did not reveal it in the tree and scroll to it.")
         }
-        review.selectedFile = "services/routing/src/routing.ts"
+        review.showFile("services/routing/src/routing.ts")
         try await Task.sleep(for: .milliseconds(300))
-        print("PASS: Changed files render as a compressed, collapsible tree that reveals selected files.")
+        func renderedFiles() -> Set<String> {
+          Set(review.diffLayoutMeasurements.keys.compactMap { key in
+            guard key.hasPrefix("row-"), let end = key.lastIndex(of: "#") else { return nil }
+            return String(key[key.index(key.startIndex, offsetBy: 4)..<end])
+          })
+        }
+        guard renderedFiles() == Set(files.map(\.filename)) else {
+          throw MergeportError.message("Files changed did not render every file on one page: \(renderedFiles()).")
+        }
+        review.setExpanded(false, file: "services/routing/tests/routing.test.ts")
+        try await Task.sleep(for: .milliseconds(300))
+        guard renderedFiles() == ["services/routing/src/routing.ts"] else {
+          throw MergeportError.message("Collapsing a file did not hide its diff: \(renderedFiles()).")
+        }
+        review.setAllExpanded(true)
+        try await Task.sleep(for: .milliseconds(300))
+        guard renderedFiles().count == files.count else {
+          throw MergeportError.message("Expand all did not show every diff: \(renderedFiles()).")
+        }
+        print("PASS: Files changed shows every file on one page beside a compressed, collapsible tree that reveals and scrolls to files.")
       }
       if args.contains("--smoke-status-panel") {
         let wasShowing = model.showStatusPanel

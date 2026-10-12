@@ -104,11 +104,16 @@ indicator. Cached reviews are kept in memory for the current app session.
   outdated. Prominent Copilot badges distinguish reviewed, pending, outdated,
   no review and unknown states. Pending does not claim Copilot has started.
 - **Native reviews**: descriptions, discussion comments, submitted reviews,
-  threaded replies and resolve/reopen controls; a collapsible changed-files
-  tree (single-child folders compressed, ↑/↓ to move between files) with
-  full-panel-width unified diffs and old/new line numbers; changed characters
-  within replacement lines get stronger red/green highlights; checks and
-  commit history.
+  threaded replies and resolve/reopen controls; Files changed shows every
+  file's unified diff on one scrolling page, as on GitHub, beside a collapsible
+  changed-files tree (single-child folders compressed, ↑/↓ to move between
+  files). Clicking a file (or a thread's "Show in Files changed") jumps to it,
+  and the tree follows the file you're reading. Each file's header, with its
+  path, +/− counts and a copy button, sticks to the top while you read it and
+  folds the file; Expand all / Collapse all fold every file. Files with more
+  than 400 changed lines are folded until you click **Load diff**. Diffs use
+  old/new line numbers; changed characters within replacement lines get
+  stronger red/green highlights; checks and commit history.
 - **Review submission**: draft inline comments by clicking a diff line number,
   then submit them together with a comment, approval or request for changes.
   Deleted lines use GitHub's LEFT side; added/context lines use RIGHT.
@@ -459,7 +464,8 @@ dist/Mergeport.app/Contents/MacOS/Mergeport --demo \
 
 `--expect-bundled-client-id CLIENT_ID` additionally verifies build configuration.
 `--smoke-grouping` checks conflict-branch aliases and cross-repo ticket groups.
-`--smoke-file-tree` checks the changed-files tree and leaves Files changed in the capture.
+`--smoke-file-tree` checks the changed-files tree, that every file renders on one
+Files changed page, and folding; it leaves Files changed in the capture.
 `--smoke-diff-context` with `--smoke-native-review` checks on-demand context
 expansion, rendered line numbers, comment anchors and same-commit refreshes.
 `--smoke-merge-policy` with `--smoke-native-review` checks optional-failure

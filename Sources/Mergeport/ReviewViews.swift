@@ -229,153 +229,11 @@ struct NativeReviewView: View {
     HSplitView {
       ChangedFilesTree(review: review, files: details.files)
         .frame(minWidth: 210, idealWidth: 260, maxWidth: 420)
-      VStack(alignment: .leading, spacing: 0) {
-        if let file = review.file {
-          VStack(alignment: .leading, spacing: 4) {
-            Text(file.filename).font(.headline).textSelection(.enabled)
-            if let previous = file.previousFilename {
-              Text("Renamed from \(previous)").font(.caption).foregroundStyle(.secondary)
-            }
-            Text(
-              "Click a line number to draft an inline comment. Comments are posted together when you submit the review."
-            )
-            .font(.caption).foregroundStyle(.secondary)
-          }.padding(14)
-          Divider()
-          switch review.diffs[file.filename] {
-          case .available(let diff, let complete):
-            if let error = review.contextErrors[file.filename] {
-              message("Context expansion unavailable: \(error)", color: .orange)
-            }
-            if !complete {
-              message(
-                "GitHub's patch is incomplete. Open GitHub for the entire file before approving.",
-                color: .orange)
-            }
-            if diff.lines.contains(where: \.coarseHighlights) {
-              message(
-                "Very long replacement lines use coarser within-line highlights.", color: .blue)
-            }
-            GeometryReader { viewport in
-              ScrollView([.vertical, .horizontal]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                  if let context = review.diffContexts[file.filename] {
-                    ForEach(context.rows) { row in
-                      switch row {
-                      case .line(let line): diffRow(line, path: file.filename)
-                      case .gap(let gap): contextGap(gap, path: file.filename)
-                      }
-                    }
-                  } else {
-                    ForEach(diff.lines) { line in diffRow(line, path: file.filename) }
-                  }
-                }.frame(minWidth: viewport.size.width, alignment: .leading).padding(.vertical, 6)
-              }
-              .background {
-                Color.clear.preference(
-                  key: DiffLayoutKey.self, value: ["viewport": viewport.size.width])
-              }
-            }
-            .onPreferenceChange(DiffLayoutKey.self) { values in
-              if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
-                review.diffLayoutMeasurements = values
-              }
-            }
-          case .unavailable(let reason):
-            Text(reason).foregroundStyle(.secondary).padding(20)
-            Button("Open files on GitHub") {
-              if let url = URL(string: review.pr.url.absoluteString + "/files") {
-                app.openExternal(url)
-              }
-            }.padding(.horizontal, 20).disabled(review.isDemo)
-            Spacer()
-          case nil:
-            Text("Choose a file").foregroundStyle(.secondary).padding(20)
-            Spacer()
-          }
-        } else {
-          ContentUnavailableView(
-            "Choose a changed file", systemImage: "doc",
-            description: Text("Outdated threads can refer to paths no longer present in this diff.")
-          )
-        }
-      }.frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-  }
-
-  private func contextGap(_ gap: DiffContextGap, path: String) -> some View {
-    HStack(spacing: 12) {
-      if review.loadingContext.contains(path) {
-        ProgressView().controlSize(.small)
-      } else {
-        if gap.canExpandUp {
-          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .up) } } label: {
-            Label("Expand up", systemImage: "arrow.up")
-          }.help("Show up to 20 lines above the next hunk")
-        }
-        if gap.canExpandDown {
-          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .down) } } label: {
-            Label("Expand down", systemImage: "arrow.down")
-          }.help("Show up to 20 lines below the previous hunk")
-        }
-        if gap.canExpandUp && gap.canExpandDown {
-          Button("Expand all") {
-            Task { await review.expandContext(path: path, gap: gap.id, direction: .all) }
-          }
-        }
+      ChangedFilesPage(review: review, files: FileTree.orderedFiles(details.files)) { anchor in
+        commentTarget = CommentTarget(anchor: anchor)
       }
-      Text(gap.count.map { "\($0) hidden lines" } ?? "More context")
-        .foregroundStyle(.secondary)
-      Spacer(minLength: 0)
+      .frame(minWidth: 400, maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(Color.blue.opacity(0.08))
-  }
-
-  private func diffRow(_ line: DiffLine, path: String) -> some View {
-    HStack(alignment: .top, spacing: 0) {
-      Button {
-        if let anchor = line.anchor(path: path) { commentTarget = CommentTarget(anchor: anchor) }
-      } label: {
-        HStack(spacing: 0) {
-          Text(line.oldLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
-          Text(line.newLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
-          Image(systemName: "plus.bubble").font(.system(size: 9)).frame(width: 24)
-            .opacity(line.anchor(path: path) == nil ? 0 : 1)
-        }.foregroundStyle(.secondary).padding(.trailing, 8)
-          .frame(maxHeight: .infinity).background(DiffColors.gutter(line.kind))
-      }.buttonStyle(.plain).disabled(
-        line.anchor(path: path) == nil || review.draftIsStale || review.isPerforming)
-      Text(line.kind == .addition ? "+" : line.kind == .deletion ? "−" : " ").frame(width: 16)
-        .padding(.vertical, 3)
-      Text(intralineText(line)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
-        .padding(.trailing, 16).padding(.vertical, 3)
-      Spacer(minLength: 0)
-    }
-    .font(.system(size: 12, design: .monospaced))
-    .fixedSize(horizontal: false, vertical: true)
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .background(DiffColors.code(line.kind))
-    .background {
-      if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
-        GeometryReader { geometry in
-          Color.clear.preference(
-            key: DiffLayoutKey.self, value: ["row-\(line.id)": geometry.size.width])
-        }
-      }
-    }
-  }
-
-  private func intralineText(_ line: DiffLine) -> AttributedString {
-    var text = AttributedString(line.text)
-    for span in line.highlights {
-      let start = text.characters.index(text.characters.startIndex, offsetBy: span.lowerBound)
-      let end = text.characters.index(text.characters.startIndex, offsetBy: span.upperBound)
-      text[start..<end].backgroundColor =
-        line.kind == .addition ? Color.green.opacity(0.32) : Color.red.opacity(0.32)
-    }
-    return text
   }
 
   /// The conversation row for a `#discussion_r<id>` link, such as Copilot's finding links.
@@ -1178,7 +1036,7 @@ struct NativeReviewView: View {
       review: review, thread: thread, findings: details.findings,
       avatarURL: { details.avatarURL(for: $0) }, viewer: details.viewer.login
     ) {
-      review.selectedFile = thread.path
+      review.showFile(thread.path, expand: true)
       review.selectSection(.files)
     }
   }
@@ -2126,6 +1984,338 @@ struct ReviewSectionTabs: View {
 }
 
 /// GitHub-style changed-files tree: collapsible folders, indent guides and status icons.
+private struct FileHeaderKey: PreferenceKey {
+  static let defaultValue: [Int: CGFloat] = [:]
+  static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+  }
+}
+
+/// Keeps file sections' scroll IDs apart from the diff rows inside them.
+private struct PageID: Hashable { let path: String }
+private extension PullRequestFile { var pageID: PageID { PageID(path: filename) } }
+
+/// A diff row keyed by its file too: lazy stacks mix up rows whose IDs repeat across sections.
+private struct PageRow: Identifiable {
+  struct ID: Hashable {
+    let path: String
+    let row: String
+  }
+  let path: String
+  let row: DiffContextRow
+  var id: ID { ID(path: path, row: row.id) }
+}
+
+/// Every changed file on one scrolling page, as on GitHub. A file's header sticks to the top
+/// while it is read and keeps the tree in step; large diffs stay folded until loaded.
+struct ChangedFilesPage: View {
+  @EnvironmentObject var app: AppModel
+  @ObservedObject var review: ReviewModel
+  let files: [PullRequestFile]
+  let comment: (DiffAnchor) -> Void
+  /// Header offsets from the latest layout; deliberately not observed.
+  @State private var headers = HeaderPositions()
+  private static let space = "changed-files"
+  private let headerHeight: CGFloat = 34
+
+  private final class HeaderPositions { var minY: [Int: CGFloat] = [:] }
+
+  var body: some View {
+    ScrollViewReader { proxy in
+      VStack(spacing: 0) {
+        summary(proxy)
+        Divider()
+        GeometryReader { viewport in
+          let width = visibleWidth(viewport.size.width)
+          ScrollView([.vertical, .horizontal]) {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+              ForEach(Array(files.enumerated()), id: \.element.pageID) { index, file in
+                Section {
+                  fileBody(file, width: width)
+                } header: {
+                  header(file, index: index, width: width, proxy: proxy)
+                }
+              }
+            }
+            .frame(minWidth: width, alignment: .leading).padding(.bottom, 6)
+          }
+          .coordinateSpace(name: Self.space)
+          .background {
+            Color.clear.preference(key: DiffLayoutKey.self, value: ["viewport": width])
+          }
+        }
+        .onPreferenceChange(FileHeaderKey.self) { follow($0) }
+        .onPreferenceChange(DiffLayoutKey.self) { values in
+          if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+            review.diffLayoutMeasurements = values
+          }
+        }
+      }
+      .onChange(of: review.fileScrollRequest) { _, request in
+        if let request { scroll(to: request.path, proxy) }
+      }
+      .onAppear {
+        // Coming back to Files changed returns to the file you were reading.
+        guard let path = review.selectedFile, path != files.first?.filename else { return }
+        review.followPausedUntil = .now.addingTimeInterval(0.5)
+        DispatchQueue.main.async { scroll(to: path, proxy) }
+      }
+    }
+  }
+
+  private func summary(_ proxy: ScrollViewProxy) -> some View {
+    HStack(spacing: 10) {
+      Text("\(files.count) changed file\(files.count == 1 ? "" : "s")").fontWeight(.semibold)
+      Text(
+        "Click a line number to draft an inline comment. Comments are posted together when you submit the review."
+      )
+      .foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+      Spacer(minLength: 8)
+      Button("Expand all") { setAll(true, proxy) }
+        .disabled(files.allSatisfy { review.isExpanded($0) })
+      Button("Collapse all") { setAll(false, proxy) }
+        .disabled(!files.contains { review.isExpanded($0) })
+    }
+    .font(.caption).buttonStyle(.borderless)
+    .padding(.horizontal, 14).padding(.vertical, 8)
+  }
+
+  private func header(_ file: PullRequestFile, index: Int, width: CGFloat, proxy: ScrollViewProxy)
+    -> some View
+  {
+    GeometryReader { geometry in
+      let frame = geometry.frame(in: .named(Self.space))
+      // Stays at the visible left edge while long lines scroll the page sideways.
+      headerBar(file, index: index, proxy: proxy)
+        .frame(width: width, height: headerHeight)
+        .offset(x: max(0, -frame.minX))
+        .preference(key: FileHeaderKey.self, value: [index: frame.minY])
+    }
+    .frame(height: headerHeight)
+    .background {
+      ZStack {
+        Color(nsColor: .windowBackgroundColor)
+        Color.primary.opacity(0.045)
+      }
+    }
+    .overlay(alignment: .top) { Divider() }
+    .overlay(alignment: .bottom) { Divider() }
+  }
+
+  private func headerBar(_ file: PullRequestFile, index: Int, proxy: ScrollViewProxy) -> some View {
+    let expanded = review.isExpanded(file)
+    return HStack(spacing: 8) {
+      Button {
+        review.setExpanded(!expanded, file: file.filename)
+        // Folding the file being read would otherwise leave the page further down.
+        if expanded, headers.minY[index].map({ $0 < 1 }) == true {
+          DispatchQueue.main.async { scroll(to: file.filename, proxy) }
+        }
+      } label: {
+        Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+          .rotationEffect(.degrees(expanded ? 90 : 0))
+          .frame(width: 18, height: 18).contentShape(Rectangle())
+      }
+      .buttonStyle(.plain).foregroundStyle(.secondary)
+      .help(expanded ? "Collapse file" : "Expand file")
+      FileStatusIcon(status: file.status)
+      if let previous = file.previousFilename {
+        Text(previous).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        Image(systemName: "arrow.right").font(.system(size: 9)).foregroundStyle(.secondary)
+      }
+      Text(file.filename).fontWeight(.semibold).lineLimit(1).truncationMode(.middle)
+        .layoutPriority(1)
+      Button {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(file.filename, forType: .string)
+      } label: {
+        Image(systemName: "doc.on.doc")
+      }.buttonStyle(.plain).foregroundStyle(.secondary).help("Copy file path")
+      Spacer(minLength: 8)
+      if file.additions > 0 { Text("+\(file.additions)").foregroundStyle(.green) }
+      if file.deletions > 0 { Text("−\(file.deletions)").foregroundStyle(.red) }
+    }
+    .font(.system(size: 12, design: .monospaced))
+    .monospacedDigit()
+    .padding(.horizontal, 10)
+  }
+
+  @ViewBuilder private func fileBody(_ file: PullRequestFile, width: CGFloat) -> some View {
+    if review.isExpanded(file) {
+      switch review.diffs[file.filename] {
+      case .available(let diff, let complete):
+        if let error = review.contextErrors[file.filename] {
+          notice("Context expansion unavailable: \(error)", color: .orange, width: width)
+        }
+        if !complete {
+          notice(
+            "GitHub's patch is incomplete. Open GitHub for the entire file before approving.",
+            color: .orange, width: width)
+        }
+        if diff.lines.contains(where: \.coarseHighlights) {
+          notice("Very long replacement lines use coarser within-line highlights.", color: .blue, width: width)
+        }
+        let rows = review.diffContexts[file.filename]?.rows ?? diff.lines.map(DiffContextRow.line)
+        ForEach(rows.map { PageRow(path: file.filename, row: $0) }) { item in
+          switch item.row {
+          case .line(let line): diffRow(line, path: file.filename)
+          case .gap(let gap): contextGap(gap, path: file.filename)
+          }
+        }
+      case .unavailable(let reason):
+        placeholder(reason, action: "Open files on GitHub", disabled: review.isDemo, width: width) {
+          if let url = URL(string: review.pr.url.absoluteString + "/files") { app.openExternal(url) }
+        }
+      case nil:
+        EmptyView()
+      }
+    } else if review.fileExpansion[file.filename] == nil {
+      placeholder("Large diffs are not rendered by default.", action: "Load diff", width: width) {
+        review.setExpanded(true, file: file.filename)
+      }
+    }
+    Color.clear.frame(height: 10)
+  }
+
+  private func placeholder(
+    _ text: String, action: String, disabled: Bool = false, width: CGFloat,
+    perform: @escaping () -> Void
+  ) -> some View {
+    VStack(spacing: 10) {
+      Text(text).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        .fixedSize(horizontal: false, vertical: true)
+      Button(action, action: perform).disabled(disabled)
+    }
+    .font(.callout).padding(.horizontal, 20).padding(.vertical, 18)
+    .frame(width: width)
+  }
+
+  private func notice(_ text: String, color: Color, width: CGFloat) -> some View {
+    Text(text).font(.callout).textSelection(.enabled)
+      .padding(10).frame(width: width, alignment: .leading)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .background(color.opacity(0.1))
+  }
+
+  private func contextGap(_ gap: DiffContextGap, path: String) -> some View {
+    HStack(spacing: 12) {
+      if review.loadingContext.contains(path) {
+        ProgressView().controlSize(.small)
+      } else {
+        if gap.canExpandUp {
+          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .up) } } label: {
+            Label("Expand up", systemImage: "arrow.up")
+          }.help("Show up to 20 lines above the next hunk")
+        }
+        if gap.canExpandDown {
+          Button { Task { await review.expandContext(path: path, gap: gap.id, direction: .down) } } label: {
+            Label("Expand down", systemImage: "arrow.down")
+          }.help("Show up to 20 lines below the previous hunk")
+        }
+        if gap.canExpandUp && gap.canExpandDown {
+          Button("Expand all") {
+            Task { await review.expandContext(path: path, gap: gap.id, direction: .all) }
+          }
+        }
+      }
+      Text(gap.count.map { "\($0) hidden lines" } ?? "More context")
+        .foregroundStyle(.secondary)
+      Spacer(minLength: 0)
+    }
+    .font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.vertical, 8)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(Color.blue.opacity(0.08))
+  }
+
+  private func diffRow(_ line: DiffLine, path: String) -> some View {
+    HStack(alignment: .top, spacing: 0) {
+      Button {
+        if let anchor = line.anchor(path: path) { comment(anchor) }
+      } label: {
+        HStack(spacing: 0) {
+          Text(line.oldLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
+          Text(line.newLine.map(String.init) ?? "").frame(width: 38, alignment: .trailing)
+          Image(systemName: "plus.bubble").font(.system(size: 9)).frame(width: 24)
+            .opacity(line.anchor(path: path) == nil ? 0 : 1)
+        }.foregroundStyle(.secondary).padding(.trailing, 8)
+          .frame(maxHeight: .infinity).background(DiffColors.gutter(line.kind))
+      }.buttonStyle(.plain).disabled(
+        line.anchor(path: path) == nil || review.draftIsStale || review.isPerforming)
+      Text(line.kind == .addition ? "+" : line.kind == .deletion ? "−" : " ").frame(width: 16)
+        .padding(.vertical, 3)
+      Text(intralineText(line)).textSelection(.enabled).fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, 16).padding(.vertical, 3)
+      Spacer(minLength: 0)
+    }
+    .font(.system(size: 12, design: .monospaced))
+    .fixedSize(horizontal: false, vertical: true)
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .background(DiffColors.code(line.kind))
+    .background {
+      if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+        GeometryReader { geometry in
+          Color.clear.preference(
+            key: DiffLayoutKey.self, value: ["row-\(path)#\(line.id)": geometry.size.width])
+        }
+      }
+    }
+  }
+
+  private func intralineText(_ line: DiffLine) -> AttributedString {
+    var text = AttributedString(line.text)
+    for span in line.highlights {
+      let start = text.characters.index(text.characters.startIndex, offsetBy: span.lowerBound)
+      let end = text.characters.index(text.characters.startIndex, offsetBy: span.upperBound)
+      text[start..<end].backgroundColor =
+        line.kind == .addition ? Color.green.opacity(0.32) : Color.red.opacity(0.32)
+    }
+    return text
+  }
+
+  /// The file whose header is stuck to (or reaching) the top is the one being read.
+  private func follow(_ positions: [Int: CGFloat]) {
+    headers.minY = positions
+    guard Date.now >= review.followPausedUntil, let first = positions.keys.min() else { return }
+    let index = positions.filter { $0.value <= headerHeight }.keys.max() ?? max(first - 1, 0)
+    guard files.indices.contains(index), review.selectedFile != files[index].filename else { return }
+    review.selectedFile = files[index].filename
+  }
+
+  private func scroll(to path: String, _ proxy: ScrollViewProxy) {
+    review.followPausedUntil = .now.addingTimeInterval(0.5)
+    proxy.scrollTo(PageID(path: path), anchor: .topLeading)
+  }
+
+  /// Always-shown (legacy) scroll bars sit inside the scroll view's frame; overlay ones don't.
+  private func visibleWidth(_ frameWidth: CGFloat) -> CGFloat {
+    guard NSScroller.preferredScrollerStyle == .legacy else { return frameWidth }
+    return frameWidth - NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+  }
+
+  /// Keeps the file being read at the top while everything above it folds or unfolds.
+  private func setAll(_ expanded: Bool, _ proxy: ScrollViewProxy) {
+    review.setAllExpanded(expanded)
+    if let path = review.selectedFile { DispatchQueue.main.async { scroll(to: path, proxy) } }
+  }
+}
+
+struct FileStatusIcon: View {
+  let status: String
+
+  var body: some View {
+    Image(systemName: style.symbol).foregroundStyle(style.color).help(status.capitalized)
+  }
+
+  private var style: (symbol: String, color: Color) {
+    switch status {
+    case "added": ("plus.square", .green)
+    case "removed": ("minus.square", .red)
+    case "renamed": ("arrow.right.square", .blue)
+    default: ("dot.square", .orange)
+    }
+  }
+}
+
 struct ChangedFilesTree: View {
   @ObservedObject var review: ReviewModel
   let files: [PullRequestFile]
@@ -2148,8 +2338,12 @@ struct ChangedFilesTree: View {
       .focusable()
       .focusEffectDisabled()
       .focused($focused)
-      .onKeyPress(.downArrow) { move(1, rows: rows, proxy: proxy) }
-      .onKeyPress(.upArrow) { move(-1, rows: rows, proxy: proxy) }
+      .onKeyPress(.downArrow) { move(1, rows: rows) }
+      .onKeyPress(.upArrow) { move(-1, rows: rows) }
+      // Keeps the file being read on the page visible in the tree.
+      .onChange(of: review.selectedFile) { _, path in
+        if let path { proxy.scrollTo("file:" + path) }
+      }
     }
   }
 
@@ -2168,7 +2362,7 @@ struct ChangedFilesTree: View {
         Spacer(minLength: 0)
       case .file(let file):
         Color.clear.frame(width: 12)
-        statusIcon(file.status)
+        FileStatusIcon(status: file.status)
         Text(row.name).lineLimit(1).truncationMode(.middle)
         Spacer(minLength: 4)
         if file.additions > 0 { Text("+\(file.additions)").foregroundStyle(.green) }
@@ -2199,7 +2393,7 @@ struct ChangedFilesTree: View {
           }
         }
       } else {
-        review.selectedFile = row.path
+        review.showFile(row.path)
       }
     }
     .help(row.path)
@@ -2218,24 +2412,11 @@ struct ChangedFilesTree: View {
     .frame(maxHeight: .infinity)
   }
 
-  private func statusIcon(_ status: String) -> some View {
-    let (symbol, color): (String, Color) =
-      switch status {
-      case "added": ("plus.square", .green)
-      case "removed": ("minus.square", .red)
-      case "renamed": ("arrow.right.square", .blue)
-      default: ("dot.square", .orange)
-      }
-    return Image(systemName: symbol).foregroundStyle(color).help(status.capitalized)
-  }
-
-  private func move(_ delta: Int, rows: [FileTreeRow], proxy: ScrollViewProxy) -> KeyPress.Result {
+  private func move(_ delta: Int, rows: [FileTreeRow]) -> KeyPress.Result {
     let paths = rows.filter { !$0.isFolder }.map(\.path)
     guard !paths.isEmpty else { return .ignored }
     let current = review.selectedFile.flatMap { paths.firstIndex(of: $0) } ?? (delta > 0 ? -1 : paths.count)
-    let next = paths[min(max(current + delta, 0), paths.count - 1)]
-    review.selectedFile = next
-    proxy.scrollTo("file:" + next)
+    review.showFile(paths[min(max(current + delta, 0), paths.count - 1)])
     return .handled
   }
 }

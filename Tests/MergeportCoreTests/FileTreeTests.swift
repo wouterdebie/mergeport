@@ -39,4 +39,13 @@ struct FileTreeTests {
     #expect(FileTree.ancestors(of: "app/services/negotiation/lib/intake/run.ts").contains("app/services/negotiation/lib/intake"))
     #expect(FileTree.ancestors(of: "README.md").isEmpty)
   }
+
+  @Test func pageOrderFollowsTheTreeAndLargeDiffsFold() {
+    #expect(FileTree.orderedFiles(files.map(file)).map(\.filename) == FileTree.orderedFilenames(files.map(file)))
+    func sized(_ additions: Int, _ deletions: Int) -> PullRequestFile {
+      PullRequestFile(filename: "a", previousFilename: nil, status: "modified", additions: additions, deletions: deletions, patch: nil)
+    }
+    #expect(!sized(PullRequestFile.largeDiffLines, 0).isLargeDiff)
+    #expect(sized(PullRequestFile.largeDiffLines - 10, 11).isLargeDiff)
+  }
 }

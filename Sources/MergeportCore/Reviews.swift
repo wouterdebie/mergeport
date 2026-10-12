@@ -99,6 +99,10 @@ public struct PullRequestFile: Decodable, Hashable, Identifiable, Sendable {
   public let deletions: Int
   public let patch: String?
   public var id: String { filename }
+
+  /// Changed lines above which Files changed folds a file until "Load diff", like GitHub.
+  public static let largeDiffLines = 400
+  public var isLargeDiff: Bool { additions + deletions > Self.largeDiffLines }
 }
 
 public struct DiscussionComment: Identifiable, Sendable {

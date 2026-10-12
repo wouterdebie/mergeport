@@ -47,7 +47,12 @@ public enum FileTree {
 
   /// File paths in visual order, ignoring collapsed folders. Used for next/previous navigation.
   public static func orderedFilenames(_ files: [PullRequestFile]) -> [String] {
-    rows(for: files).compactMap { if case .file(let file) = $0.kind { file.filename } else { nil } }
+    orderedFiles(files).map(\.filename)
+  }
+
+  /// Files in tree order, which is also the order of the Files changed page.
+  public static func orderedFiles(_ files: [PullRequestFile]) -> [PullRequestFile] {
+    rows(for: files).compactMap { if case .file(let file) = $0.kind { file } else { nil } }
   }
 
   /// Every folder path containing `filename`, including compressed chains.

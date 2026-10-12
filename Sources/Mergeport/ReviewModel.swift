@@ -28,6 +28,12 @@ enum FileDiff {
     case unavailable(String)
 }
 
+/// Asks the Files changed page to scroll to a file; each request is distinct, even for the same file.
+struct FileScrollRequest: Equatable {
+    let path: String
+    let id = UUID()
+}
+
 @MainActor
 final class ReviewModel: ObservableObject {
     let reference: PullRequest
@@ -35,13 +41,14 @@ final class ReviewModel: ObservableObject {
     @Published var details: ReviewDetails?
     @Published var isComposingReview = false
     @Published var section: ReviewSection
-    @Published var selectedFile: String? {
-        didSet {
-            // Jumping to a file (e.g. from a thread) reveals it in the tree.
-            if let selectedFile { collapsedFolders.subtract(FileTree.ancestors(of: selectedFile)) }
-        }
-    }
+    /// The file being read on the Files changed page; it follows scrolling. Use `showFile` to jump.
+    @Published var selectedFile: String?
     @Published var collapsedFolders: Set<String> = []
+    /// Files the reviewer folded or unfolded; the rest follow `PullRequestFile.isLargeDiff`.
+    @Published private(set) var fileExpansion: [String: Bool] = [:]
+    @Published private(set) var fileScrollRequest: FileScrollRequest?
+    /// Scroll-following waits for a jump to land, so it cannot reselect the file it is leaving.
+    var followPausedUntil = Date.distantPast
     @Published var isLoading = false
     @Published var isPerforming = false { didSet { app?.objectWillChange.send() } }
     @Published var error: String?
@@ -89,7 +96,24 @@ final class ReviewModel: ObservableObject {
     var pr: PullRequest { details?.pr ?? reference }
     var isDemo: Bool { app?.isDemo == true }
     var draftIsStale: Bool { draft.headSHA != nil && draft.headSHA != details?.headSHA }
-    var file: PullRequestFile? { details?.files.first { $0.filename == selectedFile } }
+
+    /// Selects a file, reveals it in the tree and scrolls Files changed to it.
+    func showFile(_ path: String, expand: Bool = false) {
+        collapsedFolders.subtract(FileTree.ancestors(of: path))
+        if expand { fileExpansion[path] = true }
+        selectedFile = path
+        followPausedUntil = .now.addingTimeInterval(0.5)
+        fileScrollRequest = FileScrollRequest(path: path)
+    }
+
+    func isExpanded(_ file: PullRequestFile) -> Bool { fileExpansion[file.filename] ?? !file.isLargeDiff }
+
+    func setExpanded(_ expanded: Bool, file: String) { fileExpansion[file] = expanded }
+
+    func setAllExpanded(_ expanded: Bool) {
+        fileExpansion = Dictionary(
+            (details?.files ?? []).map { ($0.filename, expanded) }, uniquingKeysWith: { _, last in last })
+    }
 
     func load(force: Bool = false) async {
         if let loadTask {
