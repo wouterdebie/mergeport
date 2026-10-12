@@ -76,7 +76,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   Choose **Sidebar shows › Full inbox** to list every inbox PR without opening
   them all. Overview filters do not change this list. Clicking a PR opens its
   review; the larger × button closes only the review, leaving its inbox entry
-  available. Open reviews that leave the inbox remain listed until closed.
+  available. Open reviews that leave the inbox (merged or closed) remain listed
+  until closed and disappear immediately upon closing without waiting for the
+  next background sync.
   The default remains **Open tabs**; the choice is saved across launches.
   Full-inbox groups sort by the selected tab grouping (ticket IDs use natural
   numeric order), with stable repository/PR ordering within each group.

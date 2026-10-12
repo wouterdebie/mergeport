@@ -194,14 +194,19 @@ final class AppModel: ObservableObject {
         if isConnected { return "Signed in" }
         return "Not connected"
     }
-    var pullRequests: [PullRequest] { snapshot?.pullRequests ?? [] }
+    var pullRequests: [PullRequest] {
+        snapshot?.pullRequests.filter { $0.state == "OPEN" } ?? []
+    }
 
     var sidebarReviewTabs: [ReviewTab] {
         guard sidebarContent == .fullInbox else { return tabs }
-        let inbox = pullRequests.map { pr in
-            var tab = tabs.first(where: { $0.id == pr.id }) ?? ReviewTab(pr: pr, location: pr.url)
-            tab.pr = pr
-            return tab
+        let inbox = pullRequests.compactMap { pr -> ReviewTab? in
+            guard pr.state == "OPEN" else { return nil }
+            if let tab = tabs.first(where: { $0.id == pr.id }) {
+                guard tab.pr.state == "OPEN" else { return nil }
+                return tab
+            }
+            return ReviewTab(pr: pr, location: pr.url)
         }
         let inboxIDs = Set(inbox.map(\.id))
         return TabGroups.sorted(
@@ -623,11 +628,26 @@ final class AppModel: ObservableObject {
         let kept = ids.filter { !closing.contains($0) }.compactMap { id in tabs.first { $0.id == id } }
         if !closing.isEmpty {
             let selectedIndex = tabs.firstIndex { $0.id == selectedTab }
+            var finishedKeys: Set<String> = []
             for id in closing {
+                if let tab = tabs.first(where: { $0.id == id }) {
+                    let state = reviewModels[id]?.details?.pr.state ?? tab.pr.state
+                    if state != "OPEN" {
+                        finishedKeys.insert("\(tab.pr.repository.lowercased())#\(tab.pr.number)")
+                        finishedKeys.insert(id)
+                    }
+                }
                 reviewModels[id]?.draft = ReviewDraft()
                 reviewDrafts.removeValue(forKey: id)
             }
             tabs.removeAll { closing.contains($0.id) }
+            if var current = snapshot, !finishedKeys.isEmpty {
+                current.pullRequests.removeAll {
+                    closing.contains($0.id) || finishedKeys.contains($0.id)
+                        || finishedKeys.contains("\($0.repository.lowercased())#\($0.number)")
+                }
+                snapshot = current
+            }
             if let selected = selectedTab, closing.contains(selected), let selectedIndex {
                 let remaining = tabs.count
                 selectedTab = remaining == 0 ? nil : tabs[min(selectedIndex, remaining - 1)].id
@@ -681,13 +701,36 @@ final class AppModel: ObservableObject {
             tabToClose = tabs[index]
             return
         }
+        let closedTab = tabs[index]
         tabs.remove(at: index)
         reviewModels[id]?.draft = ReviewDraft()
         reviewDrafts.removeValue(forKey: id)
+        let state = reviewModels[id]?.details?.pr.state ?? closedTab.pr.state
+        if state != "OPEN", var current = snapshot {
+            current.pullRequests.removeAll {
+                $0.id == id || ($0.repository.lowercased() == closedTab.pr.repository.lowercased() && $0.number == closedTab.pr.number)
+            }
+            snapshot = current
+        }
         let closedActiveTab = selectedTab == id
         if closedActiveTab { selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].id }
         persistWorkspace()
         if closedActiveTab { refreshActiveReview() }
+        if state == "OPEN", !isDemo, isConnected {
+            Task { [weak self] in
+                guard let self, let client = try? self.githubClient() else { return }
+                if let fresh = try? await client.pullRequest(
+                    repository: closedTab.pr.repository, number: closedTab.pr.number,
+                    viewer: self.snapshot?.viewer.login ?? "") {
+                    if fresh.state != "OPEN", var current = self.snapshot {
+                        current.pullRequests.removeAll {
+                            $0.repository.lowercased() == fresh.repository.lowercased() && $0.number == fresh.number
+                        }
+                        self.snapshot = current
+                    }
+                }
+            }
+        }
     }
 
     func recordLocation(_ url: URL, tabID: String) {
@@ -998,11 +1041,17 @@ final class AppModel: ObservableObject {
     func applyLocalChange(_ pr: PullRequest, tabID: String) {
         updateReviewTab(pr, tabID: tabID)
         guard var current = snapshot,
-              let index = current.pullRequests.firstIndex(where: { $0.repository == pr.repository && $0.number == pr.number })
+              let index = current.pullRequests.firstIndex(where: {
+                  $0.id == tabID || ($0.repository.lowercased() == pr.repository.lowercased() && $0.number == pr.number)
+              })
         else { return }
-        var updated = pr
-        updated.id = current.pullRequests[index].id
-        current.pullRequests[index] = updated
+        if pr.state != "OPEN" {
+            current.pullRequests.remove(at: index)
+        } else {
+            var updated = pr
+            updated.id = current.pullRequests[index].id
+            current.pullRequests[index] = updated
+        }
         snapshot = current
     }
 
@@ -1011,6 +1060,12 @@ final class AppModel: ObservableObject {
         var updated = pr
         updated.id = tabID
         tabs[index].pr = updated
+        if updated.state != "OPEN", var current = snapshot {
+            current.pullRequests.removeAll {
+                $0.id == tabID || ($0.repository.lowercased() == pr.repository.lowercased() && $0.number == pr.number)
+            }
+            snapshot = current
+        }
         persistWorkspace()
     }
 

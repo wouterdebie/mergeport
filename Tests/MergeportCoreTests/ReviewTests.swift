@@ -240,4 +240,16 @@ struct ReviewTests {
         #expect(!details.conversation.contains { if case .thread = $0 { true } else { false } })
         #expect(details.findings[101]?.severity == "Low")
     }
+
+    @Test func pullRequestsRecognizeMergedAndClosedStates() {
+        var openPR = DemoInbox.snapshot.pullRequests[0]
+        #expect(openPR.state == "OPEN")
+        openPR.state = "MERGED"
+        #expect(openPR.state != "OPEN")
+        openPR.state = "CLOSED"
+        #expect(openPR.state != "OPEN")
+        #expect(TabAutoClose.immediately.shouldClose(finishedAt: .now))
+        #expect(!TabAutoClose.immediately.shouldClose(finishedAt: nil))
+        #expect(!TabAutoClose.off.shouldClose(finishedAt: .now))
+    }
 }

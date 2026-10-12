@@ -99,7 +99,7 @@ public actor MergeConflictAnalyzer {
     defer { try? errorHandle.close() }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-    process.arguments = arguments
+    process.arguments = ["-c", "safe.bareRepository=all"] + arguments
     process.currentDirectoryURL = directory
     process.environment = environment
     process.standardOutput = handle

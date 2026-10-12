@@ -264,13 +264,15 @@ enum SmokeTest {
         else { throw MergeportError.message("Closing an inbox review removed its row or selected it again.") }
         model.open(pr)
         try await Task.sleep(for: .milliseconds(300))
-        model.snapshot?.pullRequests.removeAll { $0.id == pr.id }
+        var mergedPR = pr
+        mergedPR.state = "MERGED"
+        model.applyLocalChange(mergedPR, tabID: pr.id)
         guard model.sidebarReviewTabs.contains(where: { $0.id == pr.id }) else {
-          throw MergeportError.message("An open review disappeared when it left the inbox.")
+          throw MergeportError.message("An open tab for a merged review disappeared before being closed.")
         }
         model.closeTab(pr.id)
         guard !model.sidebarReviewTabs.contains(where: { $0.id == pr.id }) else {
-          throw MergeportError.message("An out-of-inbox review stayed listed after closing.")
+          throw MergeportError.message("A merged review stayed listed in sidebar after closing.")
         }
         model.snapshot = savedSnapshot
         model.open(pr)
@@ -753,6 +755,25 @@ enum SmokeTest {
             }
           })
         else { throw MergeportError.message("Menu bar logo must use a rasterized system-colored template.") }
+        // Both resolutions must show the whole, symmetric anchor, not a zoomed-in part of it.
+        func alpha(_ rep: NSBitmapImageRep, _ x: Int, _ y: Int) -> CGFloat { rep.colorAt(x: x, y: y)?.alphaComponent ?? 0 }
+        let one = representations.min { $0.pixelsWide < $1.pixelsWide }!
+        let two = representations.max { $0.pixelsWide < $1.pixelsWide }!
+        var mismatch: CGFloat = 0
+        var asymmetry: CGFloat = 0
+        for y in 0..<one.pixelsHigh {
+          for x in 0..<one.pixelsWide {
+            let downsampled = (alpha(two, 2 * x, 2 * y) + alpha(two, 2 * x + 1, 2 * y)
+              + alpha(two, 2 * x, 2 * y + 1) + alpha(two, 2 * x + 1, 2 * y + 1)) / 4
+            mismatch += abs(downsampled - alpha(one, x, y))
+            asymmetry += abs(alpha(one, x, y) - alpha(one, one.pixelsWide - 1 - x, y))
+          }
+        }
+        let pixels = CGFloat(one.pixelsWide * one.pixelsHigh)
+        guard two.pixelsWide == 2 * one.pixelsWide, mismatch / pixels < 0.1, asymmetry / pixels < 0.1 else {
+          throw MergeportError.message(
+            "Menu bar logo 1x and 2x images differ or are not the whole anchor: mismatch \(mismatch / pixels), asymmetry \(asymmetry / pixels).")
+        }
         for pr in model.pullRequests where model.unseenChanges[pr.id] != nil {
           model.open(pr)
           model.closeTab(pr.id)

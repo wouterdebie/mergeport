@@ -15,7 +15,6 @@ enum MergeportLogo {
                 bitmapDataPlanes: nil, pixelsWide: pixelsWide, pixelsHigh: pixelsHigh,
                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                 colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-            rep.size = size
             let graphics = NSGraphicsContext(bitmapImageRep: rep)!
             let context = graphics.cgContext
             context.scaleBy(x: CGFloat(resolution), y: CGFloat(resolution))
@@ -32,6 +31,8 @@ enum MergeportLogo {
             context.setBlendMode(.clear)
             context.addPath(holes)
             context.fillPath()
+            // Only now: a context made for a rep whose size is in points already scales to pixels.
+            rep.size = size
             image.addRepresentation(rep)
         }
         image.isTemplate = true
