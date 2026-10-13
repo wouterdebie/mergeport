@@ -20,7 +20,10 @@ enum SmokeTest {
         throw MergeportError.message("The main window did not become visible.")
       }
       model.showOverview(scope: .mine)
-      guard model.filteredPRs.count == 8 else { throw MergeportError.message("My PR filter failed.") }
+      guard model.filteredPRs.count == 8 else {
+        throw MergeportError.message(
+          "My PR filter failed: \(model.filteredPRs.count) matches of \(model.pullRequests.count) PRs, scope=\(model.scope), search=\(model.search).")
+      }
       model.stageFilter = .ready
       guard model.filteredPRs.count == 3 else { throw MergeportError.message("Ready filter failed.") }
       model.showOverview(scope: .review)
@@ -33,6 +36,131 @@ enum SmokeTest {
         throw MergeportError.message("Search filter failed.")
       }
       model.search = ""
+      if args.contains("--smoke-scroll-memory") {
+        guard let first = model.pullRequests.first, let second = model.pullRequests.dropFirst().first else {
+          throw MergeportError.message("Scroll restoration needs two PR fixtures.")
+        }
+        model.open(first)
+        guard let tab = model.activeTab else { throw MergeportError.message("No scroll restoration tab.") }
+        let review = model.reviewModel(for: tab)
+        await review.load(force: true)
+        let original = review.details
+        review.details?.checks = (0..<40).map {
+          PullRequestCheck(id: "scroll-check-\($0)", name: "Check \($0)", state: "success", url: nil)
+        }
+        review.details?.commits = (0..<40).map {
+          PullRequestCommit(id: "scroll-commit-\($0)", message: "Commit \($0)", author: "you",
+                            date: .now, url: first.url)
+        }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+          (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        func mainScroll(_ section: ReviewSection) throws -> NSScrollView {
+          if section == .files,
+             let scroll = scrollViews(content).first(where: { $0.documentView is NSTableView }) {
+            return scroll
+          }
+          func probes(_ view: NSView) -> [ReviewScrollProbe.Probe] {
+            if let probe = view as? ReviewScrollProbe.Probe { return [probe] }
+            return view.subviews.flatMap(probes)
+          }
+          guard let scroll = probes(content).first?.enclosingScrollView else {
+            throw MergeportError.message("No main scroll view for \(section.title).")
+          }
+          return scroll
+        }
+        let originalFrame = window.frame
+        window.setContentSize(NSSize(width: 1100, height: 640))
+        model.open(second)
+        guard let secondTab = model.activeTab else { throw MergeportError.message("No second scroll tab.") }
+        let secondReview = model.reviewModel(for: secondTab)
+        await secondReview.load(force: true)
+        secondReview.selectSection(.conversation)
+        try await Task.sleep(for: .milliseconds(800))
+        let secondScroll = try mainScroll(.conversation)
+        secondScroll.contentView.scroll(to: CGPoint(x: 0, y: 47))
+        secondScroll.reflectScrolledClipView(secondScroll.contentView)
+        for section in ReviewSection.allCases {
+          model.selectTab(tab.id)
+          review.selectSection(section)
+          try await Task.sleep(for: .milliseconds(800))
+          let scroll = try mainScroll(section)
+          let maximum = max(0, (scroll.documentView?.frame.height ?? 0) - scroll.contentView.bounds.height)
+          guard maximum > 5 else {
+            throw MergeportError.message("\(section.title) fixture is not scrollable: \(maximum).")
+          }
+          let target = CGPoint(x: 0, y: min(180, maximum / 2))
+          scroll.contentView.scroll(to: target)
+          scroll.reflectScrolledClipView(scroll.contentView)
+          try await Task.sleep(for: .milliseconds(100))
+          guard let saved = review.scrollOffsets[section], abs(saved.y - target.y) < 1 else {
+            throw MergeportError.message("\(section.title) did not save its exact scroll offset.")
+          }
+          model.open(second)
+          try await Task.sleep(for: .milliseconds(800))
+          guard abs(try mainScroll(.conversation).contentView.bounds.origin.y - 47) < 1 else {
+            throw MergeportError.message("Switching PRs mixed their scroll offsets.")
+          }
+          model.selectTab(tab.id)
+          try await Task.sleep(for: .milliseconds(800))
+          let returned = try mainScroll(section).contentView.bounds.origin
+          guard abs(returned.y - target.y) < 1 else {
+            throw MergeportError.message("\(section.title) reset on tab switch: \(returned), expected \(target).")
+          }
+          review.selectSection(section == .checks ? .commits : .checks)
+          try await Task.sleep(for: .milliseconds(300))
+          review.selectSection(section)
+          try await Task.sleep(for: .milliseconds(800))
+          let restored = try mainScroll(section).contentView.bounds.origin
+          guard abs(restored.y - target.y) < 1 else {
+            throw MergeportError.message("\(section.title) reset on section switch: \(restored).")
+          }
+        }
+        review.selectSection(.files)
+        try await Task.sleep(for: .milliseconds(300))
+        guard let file = review.details?.files.first else {
+          throw MergeportError.message("No file navigation fixture.")
+        }
+        review.showFile(file.filename)
+        try await Task.sleep(for: .milliseconds(300))
+        guard abs(try mainScroll(.files).contentView.bounds.origin.y) < 1 else {
+          throw MergeportError.message("Explicit file navigation restored an old offset instead of jumping.")
+        }
+        review.selectSection(.conversation)
+        try await Task.sleep(for: .milliseconds(500))
+        guard let body = webViews(in: content).first else {
+          throw MergeportError.message("No conversation link fixture.")
+        }
+        _ = try await evaluate(body,
+          "(() => { const a = document.createElement('a'); a.href = '\(first.url.absoluteString)#discussion_r101'; document.body.appendChild(a); a.click(); })()")
+        try await Task.sleep(for: .milliseconds(800))
+        let anchorOffset = try mainScroll(.conversation).contentView.bounds.origin.y
+        guard abs(anchorOffset - 180) > 20 else {
+          throw MergeportError.message("A conversation anchor did not override the old scroll position.")
+        }
+        // Exercise delayed content sizing and both axes without relying on a particular demo line length.
+        let fixture = NSScrollView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        let document = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 200))
+        fixture.documentView = document
+        let savedFilesOffset = review.scrollOffsets[.files]
+        review.scrollOffsets[.files] = CGPoint(x: 240, y: 420)
+        let memory = ReviewScrollMemory()
+        memory.attach(to: fixture, review: review, key: .files)
+        try await Task.sleep(for: .milliseconds(50))
+        guard review.scrollOffsets[.files] == CGPoint(x: 240, y: 420) else {
+          throw MergeportError.message("An early short layout overwrote the saved scroll offset.")
+        }
+        document.setFrameSize(NSSize(width: 1000, height: 1200))
+        memory.restore()
+        guard fixture.contentView.bounds.origin == CGPoint(x: 240, y: 420) else {
+          throw MergeportError.message("Delayed layout did not restore both scroll axes.")
+        }
+        memory.detach()
+        review.scrollOffsets[.files] = savedFilesOffset
+        review.details = original
+        window.setFrame(originalFrame, display: true)
+        print("PASS: all review sections retain exact offsets across PR and section switches; delayed layout restores both axes.")
+      }
       if args.contains("--smoke-linear") {
         let state = LinearOAuth.verifier()
         let server = try LinearCallbackServer(state: state)

@@ -69,6 +69,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   each group shows its ticket, branch or repository once. Choose what tabs are
   grouped by in Settings › Grouping › Review tabs (default: ticket or source
   branch). Click anywhere on a tab to select it.
+  Each PR remembers its scroll position separately in Conversation, Files
+  changed (including horizontal scrolling), Checks and Commits while the app
+  is running, including when switching between review sections.
 - **Tabs in the sidebar**: Settings › General › Review tabs (or View › Show
   Tabs in Sidebar) moves open PRs into an "Open" section above the inbox:
   one row per PR with its status, target branch and what it's waiting on,

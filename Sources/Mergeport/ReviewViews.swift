@@ -100,6 +100,7 @@ struct NativeReviewView: View {
       \.openURL,
       OpenURLAction { url in
         if let target = conversationTarget(url) {
+          review.scrollOffsets.removeValue(forKey: .conversation)
           review.selectSection(.conversation)
           scrollTarget = target
         } else if GitHubNavigation.pullRequestIdentity(url) != nil {
@@ -380,6 +381,7 @@ struct NativeReviewView: View {
       }
       .padding(22).frame(maxWidth: Self.pageWidth, alignment: .leading)
       .frame(maxWidth: .infinity, alignment: .leading)
+      .background(ReviewScrollProbe(review: review, key: .conversation, navigating: scrollTarget != nil))
     }
     .coordinateSpace(name: Self.conversationSpace)
     .overlay(alignment: .topLeading) {
@@ -927,6 +929,7 @@ struct NativeReviewView: View {
         }
       }.padding(22).frame(maxWidth: Self.pageWidth, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ReviewScrollProbe(review: review, key: .checks))
     }
   }
 
@@ -949,6 +952,7 @@ struct NativeReviewView: View {
         }
       }.padding(22).frame(maxWidth: Self.pageWidth, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background(ReviewScrollProbe(review: review, key: .commits))
     }
   }
 
@@ -2180,12 +2184,14 @@ private struct FilesTable: NSViewRepresentable {
   }
 
   static func dismantleNSView(_ scroll: NSScrollView, coordinator: FilesTableCoordinator) {
+    coordinator.scrollMemory.detach()
     NotificationCenter.default.removeObserver(coordinator)
   }
 }
 
 @MainActor
 private final class FilesTableCoordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+  let scrollMemory = ReviewScrollMemory()
   private var parent: FilesTable?
   private var layout = FilesLayout()
   private var ids: [FilesRow.ID] = []
@@ -2229,8 +2235,11 @@ private final class FilesTableCoordinator: NSObject, NSTableViewDataSource, NSTa
     }
     if initial {
       handledRequest = review.fileScrollRequest?.id
-      // Coming back to Files changed returns to the file you were reading.
-      if let path = review.selectedFile, path != parent.files.first?.filename {
+      if let scroll {
+        scrollMemory.attach(to: scroll, review: review, key: .files)
+      }
+      if review.scrollOffsets[.files] == nil,
+         let path = review.selectedFile, path != parent.files.first?.filename {
         DispatchQueue.main.async { self.scroll(to: path) }
       }
     } else if let request = review.fileScrollRequest, request.id != handledRequest {
@@ -2377,6 +2386,7 @@ private final class FilesTableCoordinator: NSObject, NSTableViewDataSource, NSTa
 
   private func scroll(to path: String) {
     guard let parent, let table, let scroll, let row = layout.headerRow[path] else { return }
+    scrollMemory.cancelRestoration()
     table.tile()
     let clip = scroll.contentView
     let bottom = max(0, table.frame.height - clip.bounds.height)

@@ -72,6 +72,7 @@ final class ReviewModel: ObservableObject {
     private var loadedUpdatedAt: Date?
     private var loadTask: Task<Void, Never>?
     var diffLayoutMeasurements: [String: CGFloat] = [:]
+    var scrollOffsets: [ReviewSection: CGPoint] = [:]
 
     init(tab: ReviewTab, app: AppModel, draft: ReviewDraft) {
         reference = tab.pr
@@ -97,6 +98,7 @@ final class ReviewModel: ObservableObject {
 
     /// Selects a file, reveals it in the tree and scrolls Files changed to it.
     func showFile(_ path: String, expand: Bool = false) {
+        scrollOffsets.removeValue(forKey: .files)
         collapsedFolders.subtract(FileTree.ancestors(of: path))
         if expand { fileExpansion[path] = true }
         selectedFile = path
