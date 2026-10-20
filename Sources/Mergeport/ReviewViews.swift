@@ -6,6 +6,25 @@ private struct CommentTarget: Identifiable {
   var id: String { "\(anchor.path):\(anchor.side.rawValue):\(anchor.line)" }
 }
 
+private struct ReviewActionFrameProbe: NSViewRepresentable {
+  let measured: (NSRect) -> Void
+
+  final class ProbeView: NSView {
+    var measured: ((NSRect) -> Void)?
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func layout() {
+      super.layout()
+      if window != nil { measured?(convert(bounds, to: nil)) }
+    }
+  }
+
+  func makeNSView(context: Context) -> ProbeView { ProbeView() }
+  func updateNSView(_ view: ProbeView, context: Context) {
+    view.measured = measured
+    view.needsLayout = true
+  }
+}
+
 struct NativeReviewView: View {
   @EnvironmentObject var app: AppModel
   let tab: ReviewTab
@@ -166,19 +185,30 @@ struct NativeReviewView: View {
 
   private var statusStrip: some View {
     HStack(spacing: 8) {
-      HStack(spacing: 6) {
-        Text("+\(review.pr.additions)").foregroundStyle(.green)
-        Text("−\(review.pr.deletions)").foregroundStyle(.red)
-        if let sha = review.details?.headSHA {
-          Text(String(sha.prefix(7))).foregroundStyle(.secondary).font(.caption.monospaced())
-            .help("Head commit \(sha)")
+      Button { review.selectSection(.files) } label: {
+        HStack(spacing: 6) {
+          Text("+\(review.pr.additions)").foregroundStyle(.green)
+          Text("−\(review.pr.deletions)").foregroundStyle(.red)
+          if let sha = review.details?.headSHA {
+            Text(String(sha.prefix(7))).foregroundStyle(.secondary).font(.caption.monospaced())
+              .help("Head commit \(sha)")
+          }
+        }
+        .font(.system(size: 12, weight: .semibold).monospacedDigit())
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.12)))
+        .contentShape(RoundedRectangle(cornerRadius: 7))
+      }
+      .buttonStyle(.plain)
+      .help("Lines added and removed · Open Files changed")
+      .accessibilityIdentifier("pr-lines-changed")
+      .accessibilityLabel("Lines added and removed. Open Files changed.")
+      .background {
+        if ProcessInfo.processInfo.arguments.contains("--smoke-test") {
+          ReviewActionFrameProbe { app.sidebarCloseFrames["pr-lines-changed"] = $0 }
         }
       }
-      .font(.system(size: 12, weight: .semibold).monospacedDigit())
-      .padding(.horizontal, 10).padding(.vertical, 6)
-      .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 7))
-      .overlay(RoundedRectangle(cornerRadius: 7).stroke(Color.primary.opacity(0.12)))
-      .help("Lines added and removed")
       Button { review.selectSection(.checks) } label: {
         ChecksStatusBadge(state: review.pr.checks, summary: review.details?.checkSummary)
       }

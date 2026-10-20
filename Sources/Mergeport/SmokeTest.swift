@@ -442,6 +442,22 @@ enum SmokeTest {
         }
         let review = model.reviewModel(for: tab)
         await review.load(force: true)
+        try await Task.sleep(for: .milliseconds(300))
+        guard let frame = model.sidebarCloseFrames["pr-lines-changed"] else {
+          throw MergeportError.message("The lines-changed button has no measurable hit target.")
+        }
+        let point = NSPoint(x: frame.midX, y: frame.midY)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+          guard let event = NSEvent.mouseEvent(
+            with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+          else { throw MergeportError.message("Could not generate a lines-changed click.") }
+          window.sendEvent(event)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        guard review.section == .files else {
+          throw MergeportError.message("Clicking lines changed did not open Files changed.")
+        }
         guard let file = review.details?.files.first,
           case .available(let diff, true) = review.diffs[file.filename],
           let anchor = diff.lines.first(where: { $0.kind == .addition })?.anchor(
