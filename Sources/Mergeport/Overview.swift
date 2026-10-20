@@ -563,11 +563,16 @@ struct MainWindow: View {
             }
             ForEach(Array(runs.enumerated()), id: \.element) { _, run in
                 if let label = model.tabGroupLabel(run.map { tabs[$0].pr }) {
+                    let groupTicket = model.tabGrouping == .ticket
+                        ? model.ticket(for: tabs[run[0]].pr)
+                        : nil
                     let collapsed = collapsedGroups.contains(label)
                     VStack(alignment: .leading, spacing: 1) {
                         sidebarGroupHeader(label, tabs: run.map { tabs[$0] }, collapsed: collapsed)
                         if !collapsed {
-                            ForEach(run, id: \.self) { sidebarTab(tabs[$0], groupLabel: label) }
+                            ForEach(run, id: \.self) {
+                                sidebarTab(tabs[$0], groupLabel: label, groupTicket: groupTicket)
+                            }
                         }
                     }
                     .padding(3)
@@ -606,7 +611,8 @@ struct MainWindow: View {
             HStack(spacing: 6) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                     .font(.system(size: 8, weight: .bold)).frame(width: 18)
-                Text(label).font(Self.groupLabelFont).lineLimit(1).truncationMode(.middle)
+                Text(label).font(Self.groupLabelFont).lineLimit(1)
+                    .truncationMode(model.tabGrouping == .ticket ? .tail : .middle)
                 Spacer(minLength: 4)
                 if collapsed {
                     HStack(spacing: 2) {
@@ -634,7 +640,7 @@ struct MainWindow: View {
         }
     }
 
-    private func sidebarTab(_ tab: ReviewTab, groupLabel: String?) -> some View {
+    private func sidebarTab(_ tab: ReviewTab, groupLabel: String?, groupTicket: String? = nil) -> some View {
         let pr = tab.pr
         let ticket = model.ticket(for: pr)
         let selected = model.selectedTab == tab.id
@@ -652,7 +658,7 @@ struct MainWindow: View {
                             .fontWeight(selected ? .semibold : .regular)
                         HStack(spacing: 5) {
                             Text("#" + String(pr.number)).monospacedDigit()
-                            if let ticket, ticket != groupLabel { Text(ticket).monospaced() }
+                            if let ticket, ticket != (groupTicket ?? groupLabel) { Text(ticket).monospaced() }
                             Text("→ " + pr.base).monospaced().foregroundStyle(Color.branchBlue).lineLimit(1).layoutPriority(-1)
                             Text("·")
                             Text(detail).lineLimit(1).truncationMode(.tail).layoutPriority(-2)

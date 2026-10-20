@@ -255,6 +255,17 @@ enum SmokeTest {
           throw MergeportError.message(
             "Ticket grouping lost PRs or failed to group across repositories.")
         }
+        let originalTabGrouping = model.tabGrouping
+        model.tabGrouping = .ticket
+        guard let singleTicketPR = model.pullRequests.first(where: {
+          model.ticket(for: $0) == "CON-108"
+        }), let issue = model.linearIssue(for: singleTicketPR),
+          model.tabGroupLabel([singleTicketPR]) == "\(issue.identifier) \(issue.title)"
+        else {
+          throw MergeportError.message(
+            "A single-PR ticket group should show its ticket ID and Linear title.")
+        }
+        model.tabGrouping = originalTabGrouping
         guard let staging451 = model.pullRequests.first(where: { $0.number == 451 }),
           model.relatedPRs(staging451).map(\.number) == [452],
           let routing = model.pullRequests.first(where: { $0.number == 440 }),
