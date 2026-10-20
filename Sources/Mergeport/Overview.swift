@@ -562,16 +562,13 @@ struct MainWindow: View {
                     .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 10)
             }
             ForEach(Array(runs.enumerated()), id: \.element) { _, run in
-                if let label = model.tabGroupLabel(run.map { tabs[$0].pr }) {
-                    let groupTicket = model.tabGrouping == .ticket
-                        ? model.ticket(for: tabs[run[0]].pr)
-                        : nil
+                if let label = model.sidebarGroupLabel(run.map { tabs[$0].pr }) {
                     let collapsed = collapsedGroups.contains(label)
                     VStack(alignment: .leading, spacing: 1) {
                         sidebarGroupHeader(label, tabs: run.map { tabs[$0] }, collapsed: collapsed)
                         if !collapsed {
                             ForEach(run, id: \.self) {
-                                sidebarTab(tabs[$0], groupLabel: label, groupTicket: groupTicket)
+                                sidebarTab(tabs[$0], groupLabel: label)
                             }
                         }
                     }
@@ -603,6 +600,7 @@ struct MainWindow: View {
 
     private func sidebarGroupHeader(_ label: String, tabs: [ReviewTab], collapsed: Bool) -> some View {
         let selectedInside = tabs.contains { $0.id == model.selectedTab }
+        let title = model.sidebarGroupTitle(label)
         return Button {
             withAnimation(.easeInOut(duration: 0.15)) {
                 if collapsed { collapsedGroups.remove(label) } else { collapsedGroups.insert(label) }
@@ -611,8 +609,8 @@ struct MainWindow: View {
             HStack(spacing: 6) {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                     .font(.system(size: 8, weight: .bold)).frame(width: 18)
-                Text(label).font(Self.groupLabelFont).lineLimit(1)
-                    .truncationMode(model.tabGrouping == .ticket ? .tail : .middle)
+                Text(title).font(Self.groupLabelFont).lineLimit(1)
+                    .truncationMode(model.tabGrouping == .ticket || model.tabGrouping == .related ? .tail : .middle)
                 Spacer(minLength: 4)
                 if collapsed {
                     HStack(spacing: 2) {
@@ -630,7 +628,7 @@ struct MainWindow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Grouped by \(model.tabGrouping.title.lowercased()): \(label)")
+        .help("Grouped by \(model.tabGrouping.title.lowercased()): \(title)")
         .contextMenu {
             Button(collapsed ? "Expand Group" : "Collapse Group") {
                 if collapsed { collapsedGroups.remove(label) } else { collapsedGroups.insert(label) }
@@ -640,7 +638,7 @@ struct MainWindow: View {
         }
     }
 
-    private func sidebarTab(_ tab: ReviewTab, groupLabel: String?, groupTicket: String? = nil) -> some View {
+    private func sidebarTab(_ tab: ReviewTab, groupLabel: String?) -> some View {
         let pr = tab.pr
         let ticket = model.ticket(for: pr)
         let selected = model.selectedTab == tab.id
@@ -658,7 +656,7 @@ struct MainWindow: View {
                             .fontWeight(selected ? .semibold : .regular)
                         HStack(spacing: 5) {
                             Text("#" + String(pr.number)).monospacedDigit()
-                            if let ticket, ticket != (groupTicket ?? groupLabel) { Text(ticket).monospaced() }
+                            if let ticket, ticket != groupLabel { Text(ticket).monospaced() }
                             Text("→ " + pr.base).monospaced().foregroundStyle(Color.branchBlue).lineLimit(1).layoutPriority(-1)
                             Text("·")
                             Text(detail).lineLimit(1).truncationMode(.tail).layoutPriority(-2)

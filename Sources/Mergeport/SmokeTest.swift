@@ -256,14 +256,32 @@ enum SmokeTest {
             "Ticket grouping lost PRs or failed to group across repositories.")
         }
         let originalTabGrouping = model.tabGrouping
-        model.tabGrouping = .ticket
         guard let singleTicketPR = model.pullRequests.first(where: {
           model.ticket(for: $0) == "CON-108"
-        }), let issue = model.linearIssue(for: singleTicketPR),
-          model.tabGroupLabel([singleTicketPR]) == "\(issue.identifier) \(issue.title)"
+        }), let issue = model.linearIssue(for: singleTicketPR)
         else {
-          throw MergeportError.message(
-            "A single-PR ticket group should show its ticket ID and Linear title.")
+          throw MergeportError.message("No single-ticket sidebar fixture.")
+        }
+        for grouping in [TabGrouping.ticket, .related] {
+          model.tabGrouping = grouping
+          guard model.sidebarGroupLabel([singleTicketPR]) == issue.identifier,
+            model.sidebarGroupLabel(ticket.pullRequests) == "CON-205",
+            model.sidebarGroupTitle(issue.identifier) == "\(issue.identifier) \(issue.title)"
+          else {
+            throw MergeportError.message(
+              "Single and multi-PR sidebar groups need ticket IDs and titles in \(grouping.title).")
+          }
+          model.linearIssues[issue.identifier] = nil
+          guard model.sidebarGroupLabel([singleTicketPR]) == issue.identifier,
+            model.sidebarGroupTitle(issue.identifier) == issue.identifier
+          else {
+            throw MergeportError.message("Loading Linear titles must not change sidebar group identity.")
+          }
+          model.linearIssues[issue.identifier] = issue
+        }
+        model.tabGrouping = .none
+        guard model.sidebarGroupLabel([singleTicketPR]) == nil else {
+          throw MergeportError.message("Ungrouped sidebar mode should not add ticket headers.")
         }
         model.tabGrouping = originalTabGrouping
         guard let staging451 = model.pullRequests.first(where: { $0.number == 451 }),

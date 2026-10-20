@@ -76,6 +76,10 @@ indicator. Cached reviews are kept in memory for the current app session.
   Tabs in Sidebar) moves open PRs into an "Open" section above the inbox:
   one row per PR with its status, target branch and what it's waiting on,
   grouped like the tab bar, with collapsible groups and sidebar sections.
+  In Related and Ticket identifier modes, ticket headers show the ID followed
+  by the Linear issue title (truncated to fit, with the full title on hover).
+  Tickets with a single PR get the same collapsible group as multi-PR tickets.
+  Until a Linear title is available, the header shows just the ticket ID.
   Choose **Sidebar shows › Full inbox** to list every inbox PR without opening
   them all. Overview filters do not change this list. Clicking a PR opens its
   review; the larger × button closes only the review, leaving its inbox entry

@@ -898,14 +898,11 @@ final class AppModel: ObservableObject {
 
     /// The label a tab group shows once, so its tabs don't repeat it.
     func tabGroupLabel(_ prs: [PullRequest]) -> String? {
-        guard let first = prs.first else { return nil }
-        if prs.count == 1, tabGrouping != .ticket { return nil }
+        guard let first = prs.first, prs.count > 1 else { return nil }
         let tickets = Set(prs.map { ticket(for: $0) })
         let branches = Set(prs.map { canonicalBranch($0) })
         switch tabGrouping {
-        case .ticket:
-            guard let ticket = ticket(for: first) else { return nil }
-            return linearIssue(for: first).map { "\(ticket) \($0.title)" } ?? ticket
+        case .ticket: return ticket(for: first)
         case .branch: return canonicalBranch(first)
         case .stack: return first.stack.map { "Stack #\($0.number)" }
         case .repository: return first.repository.split(separator: "/").last.map(String.init)
@@ -918,6 +915,20 @@ final class AppModel: ObservableObject {
             if branches.count == 1 { return branches.first }
             return ticket(for: first) ?? canonicalBranch(first)
         }
+    }
+
+    func sidebarGroupLabel(_ prs: [PullRequest]) -> String? {
+        if prs.count == 1, tabGrouping == .ticket || tabGrouping == .related,
+           let first = prs.first {
+            return ticket(for: first)
+        }
+        return tabGroupLabel(prs)
+    }
+
+    func sidebarGroupTitle(_ label: String) -> String {
+        guard tabGrouping == .ticket || tabGrouping == .related,
+              let issue = linearIssues[label] else { return label }
+        return "\(label) \(issue.title)"
     }
 
     private func sameBranch(_ a: PullRequest, _ b: PullRequest) -> Bool {
