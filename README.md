@@ -85,7 +85,9 @@ indicator. Cached reviews are kept in memory for the current app session.
   review; the larger × button closes only the review, leaving its inbox entry
   available. Open reviews that leave the inbox (merged or closed) remain listed
   until closed and disappear immediately upon closing without waiting for the
-  next background sync.
+  next background sync. Submitting a review takes a requested PR out of the
+  inbox at once, unless you wrote it or follow its repository, even while
+  GitHub's search still lists the request.
   The default remains **Open tabs**; the choice is saved across launches.
   Full-inbox groups sort by the selected tab grouping (ticket IDs use natural
   numeric order), with stable repository/PR ordering within each group.

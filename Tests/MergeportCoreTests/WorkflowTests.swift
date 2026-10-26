@@ -49,6 +49,26 @@ struct WorkflowTests {
         #expect(!InboxScope.review.includes(value, login: "you"))
     }
 
+    @Test func answeredReviewRequestsLeaveTheInboxUnlessYouWroteOrFollowThePR() {
+        func requested(_ number: Int, author: String, repository: String = "acme/app") -> PullRequest {
+            var value = pr()
+            value.id = "PR_\(number)"
+            value.number = number
+            value.author = author
+            value.repository = repository
+            value.reviewRequested = true
+            return value
+        }
+        let snapshot = InboxSnapshot(viewer: Viewer(login: "you"), pullRequests: [
+            requested(1, author: "alex"), requested(2, author: "you"),
+            requested(3, author: "sam", repository: "Acme/Followed"), requested(4, author: "alex"),
+        ])
+        let answered = snapshot.removingAnswered(["acme/app#1", "acme/app#2", "acme/followed#3"], followed: ["acme/followed"])
+        #expect(answered.pullRequests.map(\.number) == [2, 3, 4])
+        #expect(answered.pullRequests.map(\.reviewRequested) == [false, false, true])
+        #expect(snapshot.removingAnswered([], followed: []).pullRequests.count == 4)
+    }
+
     @Test(arguments: ["BLOCKED", "BEHIND", "UNKNOWN", "HAS_HOOKS", "NEW_FUTURE_STATE"])
     func approvalDoesNotBypassGitHubMergePolicy(_ state: String) {
         var value = pr()

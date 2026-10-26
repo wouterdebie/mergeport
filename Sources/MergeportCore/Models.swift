@@ -132,6 +132,9 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         self.stack = stack
     }
 
+    /// Identifies the PR across copies whose ids differ, such as tabs opened from a link.
+    public var key: String { "\(repository.lowercased())#\(number)" }
+
     public var displayNumber: String { "#" + String(number) }
     public var displayTitle: String { "\(displayNumber) \(repository) \(title)" }
 
@@ -275,6 +278,23 @@ public struct InboxSnapshot: Codable, Sendable {
         self.viewer = viewer
         self.pullRequests = pullRequests
         self.fetchedAt = fetchedAt
+    }
+
+    /// Takes PRs whose review request you answered (by `PullRequest.key`) out of the inbox; GitHub's
+    /// search keeps listing a request for a while after the review. PRs you wrote or whose repository
+    /// you follow stay, no longer waiting on your review.
+    public func removingAnswered(_ answered: Set<String>, followed: [String]) -> InboxSnapshot {
+        guard !answered.isEmpty else { return self }
+        let followed = Set(followed.map { $0.lowercased() })
+        var result = self
+        result.pullRequests = pullRequests.compactMap { pr in
+            guard answered.contains(pr.key) else { return pr }
+            guard pr.isMine(viewer.login) || followed.contains(pr.repository.lowercased()) else { return nil }
+            var kept = pr
+            kept.reviewRequested = false
+            return kept
+        }
+        return result
     }
 }
 

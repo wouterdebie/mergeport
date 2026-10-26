@@ -432,6 +432,20 @@ enum SmokeTest {
           throw MergeportError.message("A merged review stayed listed in sidebar after closing.")
         }
         model.snapshot = savedSnapshot
+        guard let requested = model.pullRequests.first(where: { candidate in
+          candidate.reviewRequested && !candidate.isMine(model.login)
+            && !model.repositories.contains { $0.lowercased() == candidate.repository.lowercased() }
+        }) else { throw MergeportError.message("No review-requested full inbox fixture.") }
+        model.open(requested)
+        model.reviewSubmitted(requested)
+        guard model.sidebarReviewTabs.contains(where: { $0.id == requested.id }),
+          !model.pullRequests.contains(where: { $0.id == requested.id })
+        else { throw MergeportError.message("A reviewed PR stayed in the inbox or lost its open tab.") }
+        model.closeTab(requested.id)
+        guard !model.sidebarReviewTabs.contains(where: { $0.id == requested.id }) else {
+          throw MergeportError.message("A reviewed PR stayed listed in the sidebar after closing its tab.")
+        }
+        model.snapshot = savedSnapshot
         model.open(pr)
         guard let active = model.activeTab else {
           throw MergeportError.message("Inbox review did not open for the draft check.")

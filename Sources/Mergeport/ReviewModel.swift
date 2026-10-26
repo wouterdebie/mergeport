@@ -336,7 +336,10 @@ final class ReviewModel: ObservableObject {
         let success = await perform("Review submitted", local: { $0.pr.reviewRequested = false }) { client in
             try await client.submitReview(repository: self.reference.repository, number: self.reference.number, draft: submitted)
         }
-        if success { clearReviewDraft() }
+        if success {
+            clearReviewDraft()
+            app?.reviewSubmitted(pr)
+        }
         return success
     }
 

@@ -122,6 +122,8 @@ final class AppModel: ObservableObject {
     let bundledClientID: String?
     private var reviewModels: [String: ReviewModel] = [:]
     private var reviewDrafts: [String: ReviewDraft] = [:]
+    /// When you answered a review request here, by `PullRequest.key`; GitHub's search lags behind.
+    private var answeredRequests: [String: Date] = [:]
     private let defaults: UserDefaults
     private var token: String?
     private var authTask: Task<Void, Never>?
@@ -355,9 +357,10 @@ final class AppModel: ObservableObject {
             let client = GitHubClient(token: token, session: networkSession)
             let before = snapshot
             let previousLogin = snapshot?.viewer.login
-            let result = try await client.snapshot(repositories: followed) { partial, loaded in
+            let listed = try await client.snapshot(repositories: followed) { partial, loaded in
                 await self.showListedInbox(partial, loaded: loaded, generation: currentGeneration, followed: followed)
             }
+            let result = withoutAnsweredRequests(listed)
             var tabUpdates: [String: PullRequest] = [:]
             for tab in tabs {
                 let fresh: PullRequest
@@ -419,8 +422,26 @@ final class AppModel: ObservableObject {
                 return kept
             }
         }
-        snapshot = listed
+        snapshot = withoutAnsweredRequests(listed)
         error = nil
+    }
+
+    /// Takes a PR you just reviewed out of the inbox now, rather than once GitHub's search catches up.
+    func reviewSubmitted(_ pr: PullRequest) {
+        answeredRequests[pr.key] = .now
+        guard let current = snapshot else { return }
+        snapshot = current.removingAnswered([pr.key], followed: repositories)
+        persistWorkspace()
+    }
+
+    /// Applies answered requests to fresh search results, forgetting each once search stops listing it
+    /// or after ten minutes, so a later request shows up again.
+    private func withoutAnsweredRequests(_ listed: InboxSnapshot) -> InboxSnapshot {
+        let requested = Set(listed.pullRequests.filter(\.reviewRequested).map(\.key))
+        answeredRequests = answeredRequests.filter {
+            requested.contains($0.key) && Date.now.timeIntervalSince($0.value) < 600
+        }
+        return listed.removingAnswered(Set(answeredRequests.keys), followed: repositories)
     }
 
     func signIn() {
