@@ -348,7 +348,9 @@ public struct ReviewDetails: Sendable {
       guard let item = latest[key] else { continue }
       let status: SidebarReviewer.Status =
         switch item.state {
-        case "APPROVED": .approved
+        case "APPROVED":
+          (pr.staleApprovers ?? []).contains { $0.caseInsensitiveCompare(item.author) == .orderedSame }
+            ? .staleApproval : .approved
         case "CHANGES_REQUESTED": .changesRequested
         case "DISMISSED": .dismissed
         default: .commented
@@ -497,7 +499,11 @@ public struct PullRequestLabel: Sendable, Hashable, Identifiable {
 }
 
 public struct SidebarReviewer: Sendable, Hashable, Identifiable {
-  public enum Status: Sendable, Hashable { case requested, approved, changesRequested, commented, dismissed }
+  public enum Status: Sendable, Hashable {
+    case requested, approved, changesRequested, commented, dismissed
+    /// Approved an earlier commit, and the PR's re-approval status no longer counts it.
+    case staleApproval
+  }
   public let login: String
   public let isTeam: Bool
   public let status: Status

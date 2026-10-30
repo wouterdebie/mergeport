@@ -96,6 +96,11 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public var authorAvatarURL: URL?
     /// GitHub stacked PR membership; nil when the PR isn't stacked (or from older saved workspaces).
     public var stack: PRStack?
+    /// Reviewers whose approval no longer counts: the PR changed after they approved and its required
+    /// `Reapproval` status waits for another approval. Optional so older saved workspaces still decode.
+    public var staleApprovers: [String]?
+    /// Your approval is among the stale ones. GitHub ended your review request when you approved.
+    public var reapprovalRequested: Bool?
 
     public init(
         id: String, number: Int, title: String, repository: String, url: URL,
@@ -104,7 +109,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         reviewDecision: String? = nil, mergeable: String = "UNKNOWN", mergeState: String = "UNKNOWN",
         checks: CheckState = .unknown, unresolvedThreads: Int = 0, unresolvedCopilotThreads: Int = 0,
         copilot: CopilotState = .notRequested, additions: Int = 0, deletions: Int = 0,
-        authorAvatarURL: URL? = nil, stack: PRStack? = nil
+        authorAvatarURL: URL? = nil, stack: PRStack? = nil, staleApprovers: [String] = [],
+        reapprovalRequested: Bool = false
     ) {
         self.id = id
         self.number = number
@@ -130,6 +136,8 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         self.deletions = deletions
         self.authorAvatarURL = authorAvatarURL
         self.stack = stack
+        self.staleApprovers = staleApprovers
+        self.reapprovalRequested = reapprovalRequested
     }
 
     /// Identifies the PR across copies whose ids differ, such as tabs opened from a link.
@@ -138,8 +146,11 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public var displayNumber: String { "#" + String(number) }
     public var displayTitle: String { "\(displayNumber) \(repository) \(title)" }
 
-    /// Requested from you and not yet approved; approved PRs don't need another look.
-    public var needsMyReview: Bool { reviewRequested && reviewDecision != "APPROVED" }
+    /// GitHub's approval, unless the PR changed since and its re-approval status no longer counts it.
+    public var isApproved: Bool { reviewDecision == "APPROVED" && (staleApprovers ?? []).isEmpty }
+
+    /// Requested from you and not yet approved, or changed since you approved; approved PRs don't need another look.
+    public var needsMyReview: Bool { (reviewRequested && !isApproved) || reapprovalRequested == true }
 
     public var copilotUnresolved: Int { min(unresolvedCopilotThreads ?? 0, unresolvedThreads) }
     /// Copilot findings are suggestions: they're shown, but don't hold a PR back from merging.
@@ -153,7 +164,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public var isMergeReady: Bool {
         state == "OPEN" && !isDraft && mergeable == "MERGEABLE"
             && Self.policyAllowsMerge(mergeState)
-            && (reviewDecision == nil || reviewDecision == "APPROVED")
+            && (reviewDecision == nil || isApproved)
             && blockingUnresolved == 0 && stack?.blocker == nil
     }
 
@@ -171,6 +182,7 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
 
     public var waitingReason: String {
         if isDraft { return copilot == .reviewed ? "Finish feedback, then mark ready" : copilot.title }
+        if reapprovalRequested == true { return "Changed since you approved" }
         if needsMyReview { return "Your review is requested" }
         if mergeable == "CONFLICTING" { return "Merge conflicts" }
         if reviewDecision == "CHANGES_REQUESTED" { return "Changes requested" }
@@ -182,6 +194,9 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
         }
         if checks == .failure {
             return isMergeReady ? "Checks failing; GitHub allows merging" : checks.title
+        }
+        if let stale = staleApprovers, !stale.isEmpty {
+            return "Changed since \(stale.joined(separator: ", ")) approved; needs another approval"
         }
         if reviewDecision == "REVIEW_REQUIRED" { return "Waiting for approval" }
         if checks == .pending || checks == .unknown {
@@ -209,6 +224,31 @@ public struct PullRequest: Identifiable, Codable, Hashable, Sendable {
     public func isSibling(of other: PullRequest) -> Bool {
         number != other.number && repository == other.repository
             && headRepository == other.headRepository && head == other.head
+    }
+}
+
+/// Some repositories require a commit status named "Approval" that decides whether approvals still cover the
+/// head, for example holding an approval until something is pushed that git didn't make on its own.
+/// GitHub keeps reporting such a PR approved, and ended each reviewer's request when they approved, so
+/// while the status is pending, reviewers who approved an earlier commit are asked again.
+public enum Reapproval {
+    public static let statusContext = "Approval"
+
+    /// Reviewers whose standing review (the latest that approves, requests changes or was dismissed)
+    /// approved a commit other than `head`. Comments change no approval; the author's reviews don't count.
+    public static func staleApprovers(
+        _ reviews: [(login: String, state: String, commit: String?)], head: String, author: String
+    ) -> [String] {
+        var standing: [String: (login: String, state: String, commit: String?)] = [:]
+        var order: [String] = []
+        for review in reviews where ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].contains(review.state)
+            && !review.login.isEmpty && review.login.caseInsensitiveCompare(author) != .orderedSame {
+            let key = review.login.lowercased()
+            if standing[key] == nil { order.append(key) }
+            standing[key] = review
+        }
+        return order.compactMap { standing[$0] }
+            .filter { $0.state == "APPROVED" && $0.commit != head }.map(\.login)
     }
 }
 
@@ -292,6 +332,7 @@ public struct InboxSnapshot: Codable, Sendable {
             guard pr.isMine(viewer.login) || followed.contains(pr.repository.lowercased()) else { return nil }
             var kept = pr
             kept.reviewRequested = false
+            kept.reapprovalRequested = false
             return kept
         }
         return result

@@ -260,6 +260,7 @@ public enum DemoLinear {
       issue("CON-200", "Deployment history is lost after rollback", "In Progress", "started", "#f2c94c"),
       issue("CON-205", "Tenant routing and audit trail", "Todo", "unstarted", "#e2e2e2"),
       issue("CON-215", "Workload identity for scheduled jobs", "Done", "completed", "#5e6ad2"),
+      issue("CON-221", "Webhook deliveries retry with backoff", "In Review", "started", "#0f783c"),
     ]
     return Dictionary(uniqueKeysWithValues: list.map { ($0.identifier, $0) })
   }()

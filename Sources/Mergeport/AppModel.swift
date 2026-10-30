@@ -437,7 +437,7 @@ final class AppModel: ObservableObject {
     /// Applies answered requests to fresh search results, forgetting each once search stops listing it
     /// or after ten minutes, so a later request shows up again.
     private func withoutAnsweredRequests(_ listed: InboxSnapshot) -> InboxSnapshot {
-        let requested = Set(listed.pullRequests.filter(\.reviewRequested).map(\.key))
+        let requested = Set(listed.pullRequests.filter { $0.reviewRequested || $0.reapprovalRequested == true }.map(\.key))
         answeredRequests = answeredRequests.filter {
             requested.contains($0.key) && Date.now.timeIntervalSince($0.value) < 600
         }

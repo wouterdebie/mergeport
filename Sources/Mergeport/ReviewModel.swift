@@ -333,7 +333,13 @@ final class ReviewModel: ObservableObject {
         }
         do { try draft.validate(currentHead: details.headSHA) } catch { report(error); return false }
         let submitted = draft
-        let success = await perform("Review submitted", local: { $0.pr.reviewRequested = false }) { client in
+        let success = await perform("Review submitted", local: { details in
+            details.pr.reviewRequested = false
+            guard submitted.event == .approve else { return }
+            details.pr.reapprovalRequested = false
+            let login = details.viewer.login
+            details.pr.staleApprovers?.removeAll { $0.caseInsensitiveCompare(login) == .orderedSame }
+        }) { client in
             try await client.submitReview(repository: self.reference.repository, number: self.reference.number, draft: submitted)
         }
         if success {

@@ -680,6 +680,9 @@ struct NativeReviewView: View {
     case .approved:
       Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.green)
         .help("Approved these changes")
+    case .staleApproval:
+      Image(systemName: "checkmark").fontWeight(.semibold).foregroundStyle(.orange)
+        .help("Approved an earlier commit; the changes since need another approval")
     case .changesRequested:
       Image(systemName: "plus.forwardslash.minus").foregroundStyle(.red)
         .help("Requested changes")
@@ -792,6 +795,7 @@ struct NativeReviewView: View {
     let states = details.latestReviewStates.values
     let approvals = states.filter { $0 == "APPROVED" }.count
     let changes = states.filter { $0 == "CHANGES_REQUESTED" }.count
+    let stale = review.pr.staleApprovers ?? []
     let summary = details.checkSummary
     let ready = details.canMerge
     let hasConflicts = review.conflictKey != nil
@@ -801,22 +805,28 @@ struct NativeReviewView: View {
         .background(
           ready ? Color.githubGreen : Color.secondary.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
       VStack(alignment: .leading, spacing: 0) {
-        mergeSection(
-          status: review.pr.reviewDecision == "APPROVED"
-            ? .success : review.pr.reviewDecision == "CHANGES_REQUESTED" ? .failure
-              : review.pr.reviewDecision == nil ? .neutral : .waiting,
-          title: review.pr.reviewDecision == "APPROVED"
-            ? "Changes approved"
-            : review.pr.reviewDecision == "CHANGES_REQUESTED"
-              ? "Changes requested"
-              : review.pr.reviewDecision == nil ? "No approval required" : "Review required",
-          detail: [
-            approvals > 0 ? "\(approvals) approving review\(approvals == 1 ? "" : "s")" : nil,
-            changes > 0 ? "\(changes) requesting changes" : nil,
-          ].compactMap { $0 }.joined(separator: ", ").nonEmpty
-            ?? (review.pr.reviewDecision == nil
-              ? "GitHub does not require an approving review for this PR."
-              : "At least one approving review may be required to merge."))
+        if !stale.isEmpty && review.pr.reviewDecision == "APPROVED" {
+          mergeSection(
+            status: .waiting, title: "New changes require approval",
+            detail: "Changed since \(stale.joined(separator: ", ")) approved. The required \(Reapproval.statusContext) status is waiting for another approval.")
+        } else {
+          mergeSection(
+            status: review.pr.reviewDecision == "APPROVED"
+              ? .success : review.pr.reviewDecision == "CHANGES_REQUESTED" ? .failure
+                : review.pr.reviewDecision == nil ? .neutral : .waiting,
+            title: review.pr.reviewDecision == "APPROVED"
+              ? "Changes approved"
+              : review.pr.reviewDecision == "CHANGES_REQUESTED"
+                ? "Changes requested"
+                : review.pr.reviewDecision == nil ? "No approval required" : "Review required",
+            detail: [
+              approvals > 0 ? "\(approvals) approving review\(approvals == 1 ? "" : "s")" : nil,
+              changes > 0 ? "\(changes) requesting changes" : nil,
+            ].compactMap { $0 }.joined(separator: ", ").nonEmpty
+              ?? (review.pr.reviewDecision == nil
+                ? "GitHub does not require an approving review for this PR."
+                : "At least one approving review may be required to merge."))
+        }
         Divider()
         Button {
           withAnimation(.easeInOut(duration: 0.15)) { checksExpanded.toggle() }

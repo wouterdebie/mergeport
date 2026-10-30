@@ -57,6 +57,12 @@ public enum DemoInbox {
         second.headRepository = second.repository
         second.url = URL(string: "https://github.com/acme/terraform/pull/87")!
         prs.append(second)
+        // Approved by you, then changed: the required Approval status no longer counts your approval.
+        var changed = pr(434, "Retry webhook deliveries with backoff (CON-221)", "feature/webhook-retries", "main",
+                         author: "sam", decision: "APPROVED", checks: .pending)
+        changed.staleApprovers = ["you"]
+        changed.reapprovalRequested = true
+        prs.append(changed)
         return InboxSnapshot(viewer: Viewer(login: "you"), pullRequests: prs)
     }
 
@@ -65,5 +71,6 @@ public enum DemoInbox {
         "demo-440": "Review requested",
         "demo-438": "Approved",
         "demo-443": "3 new review threads",
+        "demo-434": "Changed since you approved",
     ]
 }

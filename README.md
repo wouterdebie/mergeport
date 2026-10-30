@@ -47,6 +47,17 @@ indicator. Cached reviews are kept in memory for the current app session.
   the most recently active first.
 - **Workflow**: Draft, Your review, Needs attention, Waiting, and Ready to merge.
   Filter by ownership, workflow, repository, title, PR number or branch.
+- **Re-approvals**: a repository can require a commit status named `Approval`
+  that decides whether an approval still covers the PR, for example holding
+  it until something is pushed that git didn't make on its own (a merge from
+  the base doesn't count). GitHub keeps showing such a PR approved and ended
+  your review request when you approved, so while that status is pending,
+  Mergeport puts the PR back in Your review ("Changed since you approved"),
+  including PRs that would otherwise not be in your inbox. Authors see whose
+  approval no longer counts, the reviewer sidebar marks it with an orange
+  check, and the merge box reads "New changes require approval". Only a
+  required status counts: a staging PR sharing its head with a PR into main
+  is unaffected.
 - **Branch siblings**: staging/main PRs from the same feature branch and source
   repository are linked; different forks are not conflated. Explicit branch
   aliases let conflict branches such as `feature/foo-staging` join the same

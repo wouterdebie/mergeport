@@ -25,13 +25,17 @@ public struct GitHubClient: Sendable {
     let mine = try await searchNodes("is:pr is:open author:\(viewer.login) sort:updated-desc")
     let requested = try await searchNodes(
       "is:pr is:open review-requested:\(viewer.login) sort:updated-desc")
+    // GitHub ended your request when you approved, so a PR whose re-approval status no longer
+    // counts your approval is only found among the ones you approved.
+    let approved = try await searchNodes(
+      "is:pr is:open review:approved reviewed-by:\(viewer.login) -author:\(viewer.login) sort:updated-desc")
     let requestedIDs = Set(requested.map(\.id))
     for node in mine + requested { nodes[node.id] = node }
     for repository in repositories {
       for node in try await repositoryNodes(repository) { nodes[node.id] = node }
     }
     func pullRequests(from hydrated: [String: PullRequest]) -> [PullRequest] {
-      var merged = hydrated
+      var merged = hydrated.filter { nodes[$0.key] != nil || $0.value.reapprovalRequested == true }
       for node in nodes.values where merged[node.id] == nil {
         merged[node.id] = node.listed(viewer: viewer.login)
       }
@@ -39,14 +43,16 @@ public struct GitHubClient: Sendable {
       return merged.values.sorted { $0.updatedAt > $1.updatedAt }
     }
     let followed = Set(repositories.map { $0.lowercased() })
-    var hydrated: [String: PullRequest] = [:]
+    // Loaded before the list shows: whether they belong in the inbox depends on their reviews.
+    var hydrated = try await hydrateAll(approved.filter { nodes[$0.id] == nil }, viewer: viewer.login)
     if let onListed {
-      await onListed(InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)), [])
+      await onListed(
+        InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)), Set(hydrated.keys))
     }
     let priority = nodes.values.filter {
       requestedIDs.contains($0.id) || followed.contains($0.repository.nameWithOwner.lowercased())
     }
-    hydrated = try await hydrateAll(priority, viewer: viewer.login)
+    hydrated.merge(try await hydrateAll(priority, viewer: viewer.login)) { $1 }
     if let onListed, !priority.isEmpty {
       await onListed(
         InboxSnapshot(viewer: viewer, pullRequests: pullRequests(from: hydrated)),
@@ -168,6 +174,7 @@ public struct GitHubClient: Sendable {
     let mergeable: String
     let mergeState: String
     let checks: String?
+    let awaitsReapproval: Bool
     let stack: PRStack?
   }
 
@@ -179,7 +186,7 @@ public struct GitHubClient: Sendable {
       return InboxConnections(
         reviewRequests: reviewRequests, reviews: reviews, reviewThreads: reviewThreads,
         mergeable: mergeable, mergeState: mergeState, checks: node.rollupState,
-        stack: node.stackModel)
+        awaitsReapproval: node.commits?.awaitsReapproval ?? false, stack: node.stackModel)
     }
     struct Loaded: Decodable {
       let reviewRequests: PRNode.ReviewRequests
@@ -194,10 +201,10 @@ public struct GitHubClient: Sendable {
     struct Result: Decodable { let node: Loaded? }
     let page: Result = try await query(
       """
-      query($id: ID!) {
+      query($id: ID!, $number: Int!) {
         node(id: $id) { ... on PullRequest { \(Self.connectionFields) } }
       }
-      """, variables: ["id": .string(node.id)])
+      """, variables: ["id": .string(node.id), "number": .integer(node.number)])
     guard let loaded = page.node else {
       throw MergeportError.message(
         "A PR disappeared while loading its review status. Refresh to try again.")
@@ -208,6 +215,7 @@ public struct GitHubClient: Sendable {
       mergeable: loaded.mergeable ?? node.mergeable ?? "UNKNOWN",
       mergeState: loaded.mergeStateStatus ?? node.mergeStateStatus ?? "UNKNOWN",
       checks: loaded.commits?.rollupState ?? node.rollupState,
+      awaitsReapproval: loaded.commits?.awaitsReapproval ?? false,
       stack: PRNode.makeStack(entry: loaded.stackEntry, stack: loaded.stack) ?? node.stackModel)
   }
 
@@ -264,7 +272,8 @@ public struct GitHubClient: Sendable {
       viewer: viewer, reviews: connections.reviews, unresolved: unresolved,
       copilotUnresolved: copilotUnresolved, requested: requested,
       mergeable: connections.mergeable, mergeState: connections.mergeState,
-      checks: connections.checks, stack: connections.stack)
+      checks: connections.checks, awaitsReapproval: connections.awaitsReapproval,
+      stack: connections.stack)
   }
 
   private enum JSONValue: Encodable {
@@ -362,9 +371,13 @@ public struct GitHubClient: Sendable {
     headRepository { nameWithOwner } headRefOid reviewDecision
     """
 
+  /// Needs a `$number` variable: whether the re-approval status is required depends on the PR.
   private static let connectionFields = """
     mergeable mergeStateStatus
-    commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+    commits(last: 1) { nodes { commit {
+      statusCheckRollup { state }
+      status { context(name: "\(Reapproval.statusContext)") { state isRequired(pullRequestNumber: $number) } }
+    } } }
     reviewRequests(first: 100) {
       pageInfo { hasNextPage endCursor }
       nodes { requestedReviewer { ... on User { login } ... on Bot { login } ... on Team { name } } }
@@ -481,13 +494,28 @@ private struct PRNode: Decodable {
     struct Node: Decodable {
       struct Commit: Decodable {
         struct Rollup: Decodable { let state: String }
+        struct Status: Decodable {
+          struct Context: Decodable {
+            let state: String
+            let isRequired: Bool?
+          }
+          let context: Context?
+        }
         let statusCheckRollup: Rollup?
+        /// The `Reapproval` status; absent outside inbox connections.
+        let status: Status?
       }
       let commit: Commit
     }
     let nodes: [Node?]
     var rollupState: String? {
       nodes.compactMap { $0 }.last?.commit.statusCheckRollup?.state
+    }
+    /// The head's required re-approval status is waiting for an approval. A PR into another branch
+    /// can share its head with one that requires it.
+    var awaitsReapproval: Bool {
+      let context = nodes.compactMap { $0 }.last?.commit.status?.context
+      return context?.isRequired == true && context?.state == "PENDING"
     }
   }
   let id: String
@@ -583,7 +611,7 @@ private struct PRNode: Decodable {
 
   func model(
     viewer: String, reviews: Reviews, unresolved: Int, copilotUnresolved: Int, requested: [String],
-    mergeable: String, mergeState: String, checks: String?, stack: PRStack?
+    mergeable: String, mergeState: String, checks: String?, awaitsReapproval: Bool, stack: PRStack?
   ) -> PullRequest {
     let latestCopilot = reviews.nodes.compactMap { $0 }.last {
       CopilotState.isCopilot($0.author?.login ?? "") && $0.state != "PENDING"
@@ -597,6 +625,11 @@ private struct PRNode: Decodable {
     } else {
       copilot = reviews.pageInfo.hasPreviousPage ? .unknown : .notRequested
     }
+    let stale = awaitsReapproval
+      ? Reapproval.staleApprovers(
+        reviews.nodes.compactMap { $0 }.map { ($0.author?.login ?? "", $0.state, $0.commit?.oid) },
+        head: headRefOid, author: author?.login ?? "")
+      : []
     return PullRequest(
       id: id, number: number, title: title, repository: repository.nameWithOwner, url: url,
       author: author?.login ?? "ghost", head: headRefName,
@@ -606,7 +639,8 @@ private struct PRNode: Decodable {
       reviewDecision: reviewDecision, mergeable: mergeable, mergeState: mergeState,
       checks: CheckState(graphQL: checks),
       unresolvedThreads: unresolved, unresolvedCopilotThreads: copilotUnresolved, copilot: copilot, additions: additions, deletions: deletions,
-      authorAvatarURL: author?.avatarUrl, stack: stack
+      authorAvatarURL: author?.avatarUrl, stack: stack, staleApprovers: stale,
+      reapprovalRequested: stale.contains { $0.caseInsensitiveCompare(viewer) == .orderedSame }
     )
   }
 }
