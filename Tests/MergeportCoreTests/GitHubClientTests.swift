@@ -229,6 +229,7 @@ struct GitHubClientTests {
       try searchReply([fixture(1)], next: "mine-page-2"),
       try searchReply([fixture(2)]),
       try searchReply([fixture(3, overrides: ["author": ["login": "alex"]])]),
+      try searchReply([]),
       try repositoryReply([fixture(1), fixture(3)], next: "repo-page-2"),
       try repositoryReply([fixture(4)]),
     ])
@@ -239,7 +240,7 @@ struct GitHubClientTests {
     #expect(result.pullRequests.first { $0.number == 3 }?.reviewRequested == true)
     #expect(result.pullRequests.first { $0.number == 1 }?.stage == .ready)
     let requests = StubProtocol.state.requests
-    #expect(requests.count == 6)
+    #expect(requests.count == 7)
     #expect(
       requests.allSatisfy {
         $0.value(forHTTPHeaderField: "Authorization") == "Bearer fixture-token"
@@ -268,6 +269,7 @@ struct GitHubClientTests {
       try viewerReply(),
       try searchReply([slim]),
       try searchReply([]),
+      try searchReply([]),
       try Reply([
         "data": [
           "node": [
@@ -284,7 +286,7 @@ struct GitHubClientTests {
     #expect(pr.number == 7)
     #expect(pr.reviewRequested)
     let requests = StubProtocol.state.requests
-    #expect(requests.count == 4)
+    #expect(requests.count == 5)
     let bodies = requests.map { String(data: $0.httpBody ?? Data(), encoding: .utf8) ?? "" }
     let followUp = bodies.first { $0.contains("PR_7") } ?? ""
     #expect(followUp.contains("reviewThreads"))
@@ -372,6 +374,78 @@ struct GitHubClientTests {
     #expect(checks.allSatisfy { $0.isRequired == nil })
   }
 
+  @Test func approvalsTheReapprovalStatusStopsCountingComeBackForReview() async throws {
+    func approval(state: String, required: Bool) -> [String: Any] {
+      ["nodes": [["commit": [
+        "statusCheckRollup": ["state": state],
+        "status": ["context": ["state": state, "isRequired": required]],
+      ]]]]
+    }
+    func reviews(_ entries: [(String, String, String)]) -> [String: Any] {
+      ["pageInfo": ["hasPreviousPage": false],
+       "nodes": entries.map { ["author": ["login": $0.0], "state": $0.1, "commit": ["oid": $0.2]] }]
+    }
+    let approvedEarlier = reviews([("you", "APPROVED", "old"), ("sam", "APPROVED", "old")])
+    var changed = fixture(
+      1, overrides: ["author": ["login": "alex"], "reviewDecision": "APPROVED", "mergeStateStatus": "BLOCKED"])
+    for key in ["commits", "reviewRequests", "reviews", "reviewThreads", "mergeable", "mergeStateStatus"] {
+      changed.removeValue(forKey: key)
+    }
+    let changedConnections = fixture(1, overrides: [
+      "commits": approval(state: "PENDING", required: true), "reviews": approvedEarlier,
+      "mergeStateStatus": "BLOCKED",
+    ])
+    // Still covered: only a merge from the base was pushed, so the status passed.
+    let covered = fixture(2, overrides: [
+      "author": ["login": "alex"], "reviewDecision": "APPROVED",
+      "commits": approval(state: "SUCCESS", required: true), "reviews": approvedEarlier,
+    ])
+    // Into staging: it shares its head, and so its pending status, with a PR into main.
+    let staging = fixture(3, overrides: [
+      "author": ["login": "alex"], "reviewDecision": "APPROVED", "baseRefName": "staging",
+      "commits": approval(state: "PENDING", required: false), "reviews": approvedEarlier,
+    ])
+    let mine = fixture(4, overrides: [
+      "reviewDecision": "APPROVED", "mergeStateStatus": "BLOCKED",
+      "commits": approval(state: "PENDING", required: true),
+      "reviews": reviews([("alex", "APPROVED", "old")]),
+    ])
+    let viewer = try viewerReply()
+    let approvedSearch = try searchReply([changed, covered, staging], total: 3)
+    let mineSearch = try searchReply([mine])
+    let empty = try searchReply([])
+    let connections = try Reply(["data": ["node": changedConnections]])
+    let http = session([])
+    defer { http.invalidateAndCancel() }
+    StubProtocol.state.route { request in
+      let body = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+      if body.contains("viewer { login }") { return viewer }
+      if body.contains("review:approved") { return approvedSearch }
+      if body.contains("author:you") { return mineSearch }
+      return body.contains("search(") ? empty : connections
+    }
+    let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(repositories: [])
+    #expect(result.pullRequests.map(\.number).sorted() == [1, 4])
+    let reapproval = try #require(result.pullRequests.first { $0.number == 1 })
+    #expect(reapproval.staleApprovers == ["you", "sam"])
+    #expect(reapproval.reapprovalRequested == true)
+    #expect(reapproval.stage == .review)
+    let authored = try #require(result.pullRequests.first { $0.number == 4 })
+    #expect(authored.staleApprovers == ["alex"])
+    #expect(authored.reapprovalRequested == false)
+    #expect(authored.waitingReason == "Changed since alex approved; needs another approval")
+    let bodies = StubProtocol.state.requests.map { String(data: $0.httpBody ?? Data(), encoding: .utf8) ?? "" }
+    let search = try #require(bodies.first { $0.contains("review:approved") })
+    #expect(search.contains("reviewed-by:you -author:you"))
+    let followUp = try #require(bodies.first { $0.contains("\"PR_1\"") })
+    #expect(followUp.contains("context(name: \\\"Approval\\\")"))
+    #expect(followUp.contains("isRequired(pullRequestNumber: $number)"))
+    let variables = try #require(
+      (try JSONSerialization.jsonObject(with: Data(followUp.utf8)) as? [String: Any])?["variables"]
+        as? [String: Any])
+    #expect(variables["number"] as? Int == 1)
+  }
+
   @Test func reviewThreadsArePaginatedBeforeClassifyingReadiness() async throws {
     let first = fixture(
       1,
@@ -383,7 +457,7 @@ struct GitHubClientTests {
       ])
     let http = session([
       try viewerReply(), try searchReply([first]),
-      try searchReply([]),
+      try searchReply([]), try searchReply([]),
       try Reply([
         "data": [
           "node": [
@@ -422,7 +496,9 @@ struct GitHubClientTests {
           "nodes": [thread("copilot-pull-request-reviewer"), thread("alex")],
         ]
       ])
-    let http = session([try viewerReply(), try searchReply([copilotOnly, human]), try searchReply([])])
+    let http = session([
+      try viewerReply(), try searchReply([copilotOnly, human]), try searchReply([]), try searchReply([]),
+    ])
     defer { http.invalidateAndCancel() }
     let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
       repositories: [])
@@ -447,7 +523,7 @@ struct GitHubClientTests {
     ]
     let http = session([
       try viewerReply(), try searchReply([fixture(1, overrides: ["reviews": reviews])]),
-      try searchReply([]),
+      try searchReply([]), try searchReply([]),
     ])
     defer { http.invalidateAndCancel() }
     let result = try await GitHubClient(token: "fixture-token", session: http).snapshot(
@@ -465,7 +541,7 @@ struct GitHubClientTests {
       ])
     let http = session([
       try viewerReply(), try searchReply([first]),
-      try searchReply([]),
+      try searchReply([]), try searchReply([]),
       try Reply([
         "data": [
           "node": [

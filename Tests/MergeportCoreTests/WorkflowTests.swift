@@ -49,6 +49,46 @@ struct WorkflowTests {
         #expect(!InboxScope.review.includes(value, login: "you"))
     }
 
+    @Test func changesSinceYourApprovalPutThePRBackInYourReview() {
+        var value = pr()
+        value.author = "alex"
+        value.reviewDecision = "APPROVED"
+        value.mergeState = "BLOCKED"
+        value.checks = .pending
+        value.staleApprovers = ["you"]
+        value.reapprovalRequested = true
+        #expect(!value.isApproved && !value.isMergeReady)
+        #expect(value.stage == .review)
+        #expect(value.waitingReason == "Changed since you approved")
+        #expect(InboxScope.review.includes(value, login: "you"))
+        let answered = InboxSnapshot(viewer: Viewer(login: "you"), pullRequests: [value])
+            .removingAnswered([value.key], followed: ["acme/app"])
+        #expect(answered.pullRequests.first?.needsMyReview == false)
+    }
+
+    @Test func authorsSeeWhoseApprovalNoLongerCounts() {
+        var value = pr()
+        value.reviewDecision = "APPROVED"
+        value.mergeState = "BLOCKED"
+        value.checks = .pending
+        value.staleApprovers = ["alex", "sam"]
+        #expect(value.stage == .waiting)
+        #expect(value.waitingReason == "Changed since alex, sam approved; needs another approval")
+        value.reviewRequested = true
+        #expect(value.stage == .review)
+    }
+
+    @Test func onlyStandingApprovalsOfAnEarlierCommitAreStale() {
+        let stale = Reapproval.staleApprovers([
+            ("alex", "APPROVED", "old"), ("alex", "COMMENTED", "head"),
+            ("sam", "APPROVED", "old"), ("sam", "APPROVED", "head"),
+            ("kim", "APPROVED", "old"), ("kim", "CHANGES_REQUESTED", "old"),
+            ("lee", "APPROVED", "old"), ("lee", "DISMISSED", "old"),
+            ("you", "APPROVED", "old"), ("Pat", "APPROVED", "old"), ("pat", "APPROVED", "older"),
+        ], head: "head", author: "you")
+        #expect(stale == ["alex", "pat"])
+    }
+
     @Test func answeredReviewRequestsLeaveTheInboxUnlessYouWroteOrFollowThePR() {
         func requested(_ number: Int, author: String, repository: String = "acme/app") -> PullRequest {
             var value = pr()

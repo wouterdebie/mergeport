@@ -27,7 +27,9 @@ enum SmokeTest {
       model.stageFilter = .ready
       guard model.filteredPRs.count == 3 else { throw MergeportError.message("Ready filter failed.") }
       model.showOverview(scope: .review)
-      guard model.filteredPRs.count == 2 else {
+      guard model.filteredPRs.count == 3,
+        model.filteredPRs.contains(where: { $0.reapprovalRequested == true && $0.stage == .review })
+      else {
         throw MergeportError.message("Review filter failed.")
       }
       model.showOverview(scope: .all)
@@ -444,6 +446,16 @@ enum SmokeTest {
         model.closeTab(requested.id)
         guard !model.sidebarReviewTabs.contains(where: { $0.id == requested.id }) else {
           throw MergeportError.message("A reviewed PR stayed listed in the sidebar after closing its tab.")
+        }
+        guard let changed = model.pullRequests.first(where: { candidate in
+          candidate.reapprovalRequested == true
+            && !model.repositories.contains { $0.lowercased() == candidate.repository.lowercased() }
+        }) else {
+          throw MergeportError.message("No re-approval full inbox fixture.")
+        }
+        model.reviewSubmitted(changed)
+        guard !model.pullRequests.contains(where: { $0.id == changed.id }) else {
+          throw MergeportError.message("A re-approved PR stayed in the inbox.")
         }
         model.snapshot = savedSnapshot
         model.open(pr)

@@ -17,6 +17,20 @@ struct StatusPanelTests {
       copilot: copilot)
   }
 
+  @Test func approvalsThatStopCountingAreReported() {
+    let approved = pr(author: "alex", decision: "APPROVED")
+    var stale = approved
+    stale.staleApprovers = ["you"]
+    stale.reapprovalRequested = true
+    #expect(StatusPanel.change(from: approved, to: stale, login: "you") == "Changed since you approved")
+    #expect(StatusPanel.change(from: nil, to: stale, login: "you") == "Changed since you approved")
+    #expect(StatusPanel.needsYou(stale, login: "you"))
+    let mine = pr(decision: "APPROVED")
+    var changed = mine
+    changed.staleApprovers = ["alex"]
+    #expect(StatusPanel.change(from: mine, to: changed, login: "you") == "Needs another approval")
+  }
+
   @Test func meaningfulTransitionsOnYourPRsAreReported() {
     let base = pr()
     #expect(StatusPanel.change(from: base, to: base, login: "you") == nil)

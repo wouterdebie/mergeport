@@ -38,9 +38,10 @@ public enum StatusPanel {
   /// Only your PRs and PRs you're asked to review are tracked; other PRs in followed repositories are noise.
   public static func change(from old: PullRequest?, to new: PullRequest, login: String) -> String? {
     guard new.state == "OPEN" else { return nil }
-    guard let old else { return new.needsMyReview ? "Review requested" : nil }
-    guard new.isMine(login) || new.reviewRequested || old.reviewRequested else { return nil }
-    if new.needsMyReview && !old.needsMyReview { return "Review requested" }
+    let requested = new.reapprovalRequested == true ? "Changed since you approved" : "Review requested"
+    guard let old else { return new.needsMyReview ? requested : nil }
+    guard new.isMine(login) || new.needsMyReview || new.reviewRequested || old.reviewRequested else { return nil }
+    if new.needsMyReview && !old.needsMyReview { return requested }
     if new.reviewDecision != old.reviewDecision {
       switch new.reviewDecision {
       case "APPROVED": return "Approved"
@@ -48,6 +49,7 @@ public enum StatusPanel {
       default: break
       }
     }
+    if !(new.staleApprovers ?? []).isEmpty && (old.staleApprovers ?? []).isEmpty { return "Needs another approval" }
     if new.mergeable == "CONFLICTING" && old.mergeable != "CONFLICTING" { return "Merge conflicts" }
     if new.checks == .failure && old.checks != .failure { return "Checks failed" }
     if new.stage == .ready && old.stage != .ready { return "Ready to merge" }
